@@ -62,7 +62,7 @@ export const Sidebar: React.FC = () => {
   return (
     <>
       {/* Desktop / Tablet Sidebar (Sleek responsive width: md:w-56 lg:w-64) */}
-      <aside className="hidden md:flex flex-col w-56 lg:w-64 shrink-0 bg-slate-900 border-r border-slate-800/80 p-3 lg:p-4 justify-between h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)] sticky top-14 sm:top-16 select-none overflow-y-auto">
+      <aside className="hidden md:flex flex-col w-56 lg:w-64 shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800/80 p-3 lg:p-4 justify-between h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)] sticky top-14 sm:top-16 select-none overflow-y-auto transition-colors duration-200">
         <div className="space-y-4 lg:space-y-5">
           {/* Brand header */}
           <div className="flex items-center gap-2.5 px-1 lg:px-2">
@@ -70,10 +70,10 @@ export const Sidebar: React.FC = () => {
               <HeartPulse className="w-4 h-4 lg:w-5 lg:h-5 text-slate-950" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5 truncate">
-                Vascular<span className="text-teal-400">AI</span>
+              <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5 truncate">
+                Vascular<span className="text-teal-500 dark:text-teal-400">AI</span>
               </h2>
-              <p className="text-[10px] text-slate-400 font-medium truncate">Surgery Workspace</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">Surgery Workspace</p>
             </div>
           </div>
 
@@ -89,16 +89,16 @@ export const Sidebar: React.FC = () => {
                   className={`w-full flex items-center justify-between px-2.5 lg:px-3 py-2 lg:py-2.5 rounded-xl text-xs lg:text-sm font-medium transition cursor-pointer group ${
                     isActive
                       ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow-md shadow-teal-950/40'
-                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800/60'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 truncate">
-                    <Icon className={`w-4 h-4 shrink-0 transition ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-teal-400'}`} />
+                    <Icon className={`w-4 h-4 shrink-0 transition ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-teal-500'}`} />
                     <span className="truncate">{isAr ? item.labelAr : item.labelEn}</span>
                   </div>
                   {item.badge && (
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0 ${
-                      isActive ? 'bg-white/20 text-white' : 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
+                      isActive ? 'bg-white/20 text-white' : 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20'
                     }`}>
                       {item.badge}
                     </span>
@@ -110,10 +110,10 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {/* Uploaded Books & Guidelines Indicator Button */}
-        <div className="space-y-2 pt-3 border-t border-slate-800/60">
+        <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-800/60">
           <button
             onClick={() => setIsBooksCatalogOpen(true)}
-            className="w-full flex items-center justify-between p-2.5 lg:p-3 rounded-2xl bg-teal-500/10 border border-teal-500/30 hover:bg-teal-500/20 hover:border-teal-500/60 text-teal-300 font-semibold text-xs transition cursor-pointer shadow-md group"
+            className="w-full flex items-center justify-between p-2.5 lg:p-3 rounded-2xl bg-teal-500/10 border border-teal-500/30 hover:bg-teal-500/20 hover:border-teal-500/60 text-teal-700 dark:text-teal-300 font-semibold text-xs transition cursor-pointer shadow-sm group"
             title={isAr ? 'عرض وتصفح قائمة الكتب والمراجع المرفوعة بالتطبيق' : 'View all uploaded & indexed medical textbooks'}
           >
             <div className="flex items-center gap-2 min-w-0">
@@ -176,7 +176,7 @@ export const Sidebar: React.FC = () => {
       {/* Mobile Bottom Navigation Bar (High touch-target, flawless spacing) */}
       <nav
         aria-label={isAr ? 'شريط التنقل السفلي للهاتف' : 'Mobile Bottom Navigation'}
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 border-t border-slate-800 backdrop-blur-lg flex items-center justify-around py-1 px-1 h-14"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 backdrop-blur-lg flex items-center justify-around py-1 px-1 h-14 transition-colors duration-200"
       >
         {/* 1. Dashboard */}
         <button
@@ -257,26 +257,26 @@ export const Sidebar: React.FC = () => {
           className="md:hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex flex-col justify-end animate-in fade-in duration-200"
         >
           <div
-            className="w-full max-h-[85vh] bg-slate-900 border-t border-slate-700/80 rounded-t-3xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300"
+            className="w-full max-h-[85vh] bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700/80 rounded-t-3xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300"
           >
             {/* Drawer Header */}
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-850">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-850">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-teal-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black shadow-md">
                   <HeartPulse className="w-4 h-4 text-slate-950" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-white">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                     {isAr ? 'كل أقسام وخصائص التطبيق' : 'All Features & Workspace'}
                   </h3>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
                     {userProfile.name} • {userProfile.specialty}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setIsMobileMenuOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
                 aria-label="Close"
               >
                 <X className="w-5 h-5" />

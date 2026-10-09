@@ -199,4 +199,5 @@ export interface TutorMessage {
   hasMedicalDiagram?: boolean;
   followUpQuestions?: string[];
   isStreaming?: boolean;
+  reactions?: Record<string, number>;
 }

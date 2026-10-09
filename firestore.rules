@@ -1,0 +1,133 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Validators
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'studyLevel', 'preferredLanguage']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.studyLevel is string && data.studyLevel in ['student', 'resident', 'fellow', 'consultant'] &&
+             data.preferredLanguage is string && data.preferredLanguage in ['en', 'ar', 'bilingual'];
+    }
+
+    function isValidNote(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'category', 'detailedContent']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId == userId &&
+             data.title is string && data.title.size() <= 200 &&
+             data.category is string && data.category in ['Arterial', 'Venous', 'Aorta', 'Carotid', 'Trauma', 'Dialysis', 'General'] &&
+             data.detailedContent is string && data.detailedContent.size() <= 50000;
+    }
+
+    function isValidFlashcard(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'topic', 'category', 'frontEn', 'backEn', 'status']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId == userId &&
+             data.topic is string && data.topic.size() <= 200 &&
+             data.category is string && data.category in ['Arterial', 'Venous', 'Aorta', 'Carotid', 'Trauma', 'Dialysis', 'General'] &&
+             data.frontEn is string && data.frontEn.size() <= 2000 &&
+             data.backEn is string && data.backEn.size() <= 5000 &&
+             data.status is string && data.status in ['new', 'learning', 'mastered'];
+    }
+
+    function isValidBook(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'shortTitle', 'type', 'status', 'totalPages', 'isUserUploaded']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId == userId &&
+             data.title is string && data.title.size() <= 250 &&
+             data.shortTitle is string && data.shortTitle.size() <= 100 &&
+             data.type is string && data.type in ['textbook', 'guideline', 'review', 'notes'] &&
+             data.status is string && data.status in ['indexed', 'processing', 'ready'] &&
+             data.totalPages is number &&
+             data.isUserUploaded == true;
+    }
+
+    function isValidBookChunk(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'bookId', 'document_id', 'chapter', 'page_number', 'content']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId == userId &&
+             data.bookId is string && data.bookId.size() <= 128 &&
+             data.document_id is string && data.document_id.size() <= 128 &&
+             data.chapter is string && data.chapter.size() <= 250 &&
+             data.page_number is number &&
+             data.content is string && data.content.size() <= 50000;
+    }
+
+    // Match Rules for User and Subcollections
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow delete: if false;
+
+      // Notes Subcollection
+      match /notes/{noteId} {
+        allow get: if isOwner(userId) && isValidId(noteId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(noteId) && isValidNote(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(noteId) && isValidNote(incoming(), userId);
+        allow delete: if isOwner(userId) && isValidId(noteId);
+      }
+
+      // Flashcards Subcollection
+      match /flashcards/{flashcardId} {
+        allow get: if isOwner(userId) && isValidId(flashcardId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(flashcardId) && isValidFlashcard(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(flashcardId) && isValidFlashcard(incoming(), userId);
+        allow delete: if isOwner(userId) && isValidId(flashcardId);
+      }
+
+      // User Books Subcollection (Whole Books without size limits)
+      match /books/{bookId} {
+        allow get: if isOwner(userId) && isValidId(bookId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(bookId) && isValidBook(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(bookId) && isValidBook(incoming(), userId);
+        allow delete: if isOwner(userId) && isValidId(bookId);
+
+        // Complete Chunks Subcollection (holds every single page/chapter of the book)
+        match /chunks/{chunkId} {
+          allow get: if isOwner(userId) && isValidId(chunkId);
+          allow list: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidId(chunkId) && isValidBookChunk(incoming(), userId);
+          allow update: if isOwner(userId) && isValidId(chunkId) && isValidBookChunk(incoming(), userId);
+          allow delete: if isOwner(userId) && isValidId(chunkId);
+        }
+      }
+    }
+
+    // Connection testing doc
+    match /test/{testId} {
+      allow read: if true;
+    }
+  }
+}

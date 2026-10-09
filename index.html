@@ -13,22 +13,26 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
-      // Suppress Vite HMR / preview proxy WebSocket disconnections
-      window.addEventListener('error', function(e) {
-        if (e && (e.message?.includes?.('WebSocket') || String(e.error)?.includes?.('WebSocket'))) {
-          e.stopImmediatePropagation();
-          e.preventDefault();
-        }
-      });
-      window.addEventListener('unhandledrejection', function(e) {
-        if (e && (String(e.reason)?.includes?.('WebSocket') || e.reason?.message?.includes?.('WebSocket'))) {
-          e.stopImmediatePropagation();
-          e.preventDefault();
-        }
-      });
+      // Suppress Vite HMR / preview proxy WebSocket disconnections and console errors
+      (function() {
+        window.addEventListener('error', function(e) {
+          if (e && (e.message?.includes?.('WebSocket') || String(e.error)?.includes?.('WebSocket') || e.filename?.includes?.('@vite/client'))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return true;
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          if (e && (String(e.reason)?.includes?.('WebSocket') || e.reason?.message?.includes?.('WebSocket'))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return true;
+          }
+        }, true);
+      })();
     </script>
   </head>
-  <body class="h-full bg-slate-950 text-slate-100 antialiased font-sans">
+  <body class="h-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased font-sans">
     <div id="root" class="h-full"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -10,7 +10,9 @@ import {
   Languages,
   Command,
   Stethoscope,
-  BookOpen
+  BookOpen,
+  Cloud,
+  LogIn
 } from 'lucide-react';
 
 interface TimeGreeting {
@@ -68,7 +70,10 @@ export const Header: React.FC = () => {
     setIsMedicalDisclaimerOpen,
     setIsBooksCatalogOpen,
     references,
-    notification
+    notification,
+    firebaseUser,
+    signInWithGoogle,
+    signOutUser
   } = useApp();
 
   const isAr = languageMode === 'ar';
@@ -87,7 +92,7 @@ export const Header: React.FC = () => {
   const doctorLastName = userProfile.name.split(' ')[1] || userProfile.name.split(' ')[0] || '';
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 sm:h-16 w-full items-center justify-between border-b border-slate-800/80 bg-slate-900/95 px-2 sm:px-4 md:px-6 backdrop-blur-md gap-1.5 sm:gap-3 flex-nowrap select-none overflow-x-clip">
+    <header className="sticky top-0 z-30 flex h-14 sm:h-16 w-full items-center justify-between border-b border-slate-200 dark:border-slate-800/80 bg-white/95 dark:bg-slate-900/95 px-2 sm:px-4 md:px-6 backdrop-blur-md gap-1.5 sm:gap-3 flex-nowrap select-none overflow-x-clip transition-colors duration-200">
       {/* Left side: Dynamic Compact Time Greeting and Global Search */}
       <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 shrink">
         {/* Dynamic Compact Greeting Chip: changes icon & phrase with time of day, never wraps or stacks */}
@@ -96,18 +101,18 @@ export const Header: React.FC = () => {
           title={isAr ? `${timeGreeting.ar} دكتور ${doctorLastName}` : `${timeGreeting.en}, Dr. ${doctorLastName}`}
         >
           {timeGreeting.icon === 'sunrise' && (
-            <Sunrise className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
+            <Sunrise className="w-3.5 h-3.5 text-amber-500 shrink-0 animate-pulse" />
           )}
           {timeGreeting.icon === 'sun' && (
-            <Sun className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+            <Sun className="w-3.5 h-3.5 text-amber-500 shrink-0" />
           )}
           {timeGreeting.icon === 'sunset' && (
-            <Sunset className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+            <Sunset className="w-3.5 h-3.5 text-orange-500 shrink-0" />
           )}
           {timeGreeting.icon === 'moon' && (
-            <Moon className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+            <Moon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
           )}
-          <span className="truncate font-semibold text-slate-200">
+          <span className="truncate font-semibold text-slate-800 dark:text-slate-200">
             {isAr
               ? `${timeGreeting.ar} ${doctorLastName ? `د. ${doctorLastName}` : ''}`
               : `${timeGreeting.en}${doctorLastName ? `, Dr. ${doctorLastName}` : ''}`}
@@ -118,17 +123,17 @@ export const Header: React.FC = () => {
         <div className="hidden md:flex flex-1 max-w-xs lg:max-w-md min-w-0">
           <button
             onClick={() => setIsCommandPaletteOpen(true)}
-            className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 hover:border-teal-500/50 text-slate-400 hover:text-slate-200 transition text-xs shadow-xs cursor-pointer"
+            className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 hover:border-teal-500/50 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 transition text-xs shadow-xs cursor-pointer"
           >
             <div className="flex items-center gap-2 overflow-hidden truncate">
-              <Search className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+              <Search className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
               <span className="truncate text-xs">
                 {isAr
                   ? 'ابحث في مراجع الأوعية (رذرفورد، ESVS)...'
                   : 'Search vascular knowledge...'}
               </span>
             </div>
-            <kbd className="hidden lg:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 font-mono text-[10px] shrink-0 border border-slate-600">
+            <kbd className="hidden lg:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[10px] shrink-0 border border-slate-300 dark:border-slate-600">
               <Command className="w-2.5 h-2.5" /> K
             </kbd>
           </button>
@@ -137,12 +142,12 @@ export const Header: React.FC = () => {
         {/* Global Search: Mobile icon button (compact & clean) */}
         <button
           onClick={() => setIsCommandPaletteOpen(true)}
-          className="md:hidden flex items-center justify-center p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/90 border border-slate-700/80 hover:border-teal-500/50 text-slate-300 hover:text-white transition text-xs shadow-xs cursor-pointer shrink-0"
+          className="md:hidden flex items-center justify-center p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 hover:border-teal-500/50 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition text-xs shadow-xs cursor-pointer shrink-0"
           title={isAr ? 'البحث السريع في المراجع (Cmd+K)' : 'Quick Search (Cmd+K)'}
           aria-label={isAr ? 'بحث سريع' : 'Quick Search'}
         >
-          <Search className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-          <span className="hidden xs:inline text-[11px] text-slate-400 ml-1">
+          <Search className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
+          <span className="hidden xs:inline text-[11px] text-slate-600 dark:text-slate-400 ml-1">
             {isAr ? 'بحث' : 'Search'}
           </span>
         </button>
@@ -153,27 +158,27 @@ export const Header: React.FC = () => {
         {/* Books & Guidelines Catalog Button */}
         <button
           onClick={() => setIsBooksCatalogOpen(true)}
-          className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-teal-500/15 border border-teal-500/35 text-teal-300 hover:bg-teal-500/25 hover:border-teal-500/70 transition text-xs font-bold cursor-pointer shadow-xs group shrink-0"
+          className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-teal-500/15 border border-teal-500/35 text-teal-700 dark:text-teal-300 hover:bg-teal-500/25 transition text-xs font-bold cursor-pointer shadow-xs group shrink-0"
           title={isAr ? "اضغط هنا لتصفح الكتب والمراجع المرفوعة بالتطبيق" : "Click to view uploaded & indexed textbooks"}
           aria-label={isAr ? "الكتب المرفوعة" : "Uploaded Books"}
         >
-          <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-400 shrink-0 group-hover:scale-110 transition" />
+          <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600 dark:text-teal-400 shrink-0 group-hover:scale-110 transition" />
           <span className="hidden xl:inline text-xs">
             {isAr ? 'الكتب' : 'Books'}
           </span>
-          <span className="px-1.5 py-0.2 rounded-md bg-teal-500/30 text-[10px] font-mono font-black text-teal-200 border border-teal-400/30 shrink-0">
+          <span className="px-1.5 py-0.2 rounded-md bg-teal-500/20 text-[10px] font-mono font-black text-teal-700 dark:text-teal-200 border border-teal-500/30 shrink-0">
             {references.length}
           </span>
         </button>
 
         {/* Desktop Language switcher (3-segment pill) */}
-        <div className="hidden md:flex items-center rounded-xl bg-slate-800/90 border border-slate-700/80 p-0.5 text-xs shrink-0">
+        <div className="hidden md:flex items-center rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 p-0.5 text-xs shrink-0">
           <button
             onClick={() => setLanguageMode('en')}
             className={`px-2 py-1 rounded-lg font-medium transition cursor-pointer ${
               languageMode === 'en'
                 ? 'bg-teal-600 text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
             title="English Only"
           >
@@ -184,7 +189,7 @@ export const Header: React.FC = () => {
             className={`px-2 py-1 rounded-lg font-medium transition cursor-pointer ${
               languageMode === 'bilingual'
                 ? 'bg-teal-600 text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
             title="Bilingual: Arabic + English Medical Terminology"
           >
@@ -195,7 +200,7 @@ export const Header: React.FC = () => {
             className={`px-2 py-1 rounded-lg font-medium transition cursor-pointer ${
               languageMode === 'ar'
                 ? 'bg-teal-600 text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
             title="Arabic Mode"
           >
@@ -203,42 +208,90 @@ export const Header: React.FC = () => {
           </button>
         </div>
 
-        {/* Mobile Language switcher: 1 compact cycle button (doesn't crowd mobile bar) */}
+        {/* Mobile Language switcher: 1 compact cycle button */}
         <button
           onClick={() => {
             if (languageMode === 'en') setLanguageMode('bilingual');
             else if (languageMode === 'bilingual') setLanguageMode('ar');
             else setLanguageMode('en');
           }}
-          className="md:hidden flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-800/90 border border-slate-700/80 text-teal-300 hover:text-white transition text-[11px] font-bold shadow-xs shrink-0 cursor-pointer"
+          className="md:hidden flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 text-teal-700 dark:text-teal-300 hover:text-teal-900 dark:hover:text-white transition text-[11px] font-bold shadow-xs shrink-0 cursor-pointer"
           title={isAr ? "اضغط لتبديل اللغة (إنجليزي / ثنائي / عربي)" : "Tap to toggle language (EN / Bilingual / AR)"}
         >
-          <Languages className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+          <Languages className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
           <span className="font-semibold">
             {languageMode === 'ar' ? 'عربي' : languageMode === 'bilingual' ? 'ثنائي' : 'EN'}
           </span>
         </button>
 
-        {/* Safety Disclaimer Button (visible on tablet and up so mobile stays uncluttered) */}
+        {/* Safety Disclaimer Button */}
         <button
           onClick={() => setIsMedicalDisclaimerOpen(true)}
-          className="hidden sm:flex items-center gap-1 p-1.5 sm:px-2 sm:py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 transition text-xs font-medium cursor-pointer shrink-0"
+          className="hidden sm:flex items-center gap-1 p-1.5 sm:px-2 sm:py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition text-xs font-medium cursor-pointer shrink-0"
           title="Clinical Safety & Disclaimer"
           aria-label="Clinical Disclaimer"
         >
-          <ShieldAlert className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+          <ShieldAlert className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 shrink-0" />
           <span className="hidden 2xl:inline">{isAr ? 'إخلاء المسؤولية' : 'Disclaimer'}</span>
         </button>
 
-        {/* Dark/Light mode toggle */}
+        {/* Dark/Light mode toggle with responsive icons & active state */}
         <button
           onClick={() => setDarkMode(!darkMode)}
-          className="p-1.5 sm:p-2 rounded-xl bg-slate-800/80 border border-slate-700/80 text-slate-400 hover:text-slate-200 transition cursor-pointer shrink-0"
-          title={darkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
-          aria-label="Toggle theme"
+          className={`flex items-center gap-1.5 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl border transition cursor-pointer shrink-0 shadow-xs ${
+            darkMode
+              ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400'
+              : 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-700'
+          }`}
+          title={
+            darkMode
+              ? (isAr ? 'تفعيل الوضع النهاري (Light Mode)' : 'Switch to Light Theme')
+              : (isAr ? 'تفعيل الوضع الليلي (Dark Mode)' : 'Switch to Dark Theme')
+          }
+          aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
         >
-          {darkMode ? <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" /> : <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" />}
+          {darkMode ? (
+            <>
+              <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+              <span className="hidden xl:inline text-[11px] font-bold text-slate-300">
+                {isAr ? 'نهاري' : 'Light'}
+              </span>
+            </>
+          ) : (
+            <>
+              <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 shrink-0" />
+              <span className="hidden xl:inline text-[11px] font-bold text-slate-700">
+                {isAr ? 'ليلي' : 'Dark'}
+              </span>
+            </>
+          )}
         </button>
+
+        {/* Firebase Cloud Sync / Auth Status */}
+        {firebaseUser ? (
+          <button
+            onClick={signOutUser}
+            className="flex items-center gap-1.5 p-1 sm:px-2 sm:py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition text-xs shrink-0 cursor-pointer"
+            title={isAr ? `متصل بالسحابة: ${firebaseUser.email || firebaseUser.displayName} (انقر لتسجيل الخروج)` : `Cloud Synced: ${firebaseUser.email || firebaseUser.displayName} (Click to sign out)`}
+          >
+            <Cloud className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="hidden lg:inline text-[11px] font-semibold">
+              {isAr ? 'سحابي متصل' : 'Synced'}
+            </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          </button>
+        ) : (
+          <button
+            onClick={signInWithGoogle}
+            className="flex items-center gap-1.5 p-1 sm:px-2.5 sm:py-1 rounded-xl bg-teal-500/15 border border-teal-500/40 text-teal-300 hover:bg-teal-500/25 transition text-xs shrink-0 cursor-pointer shadow-xs"
+            title={isAr ? 'مزامنة مع سحابة فايربيس (Google Sign-In)' : 'Sync to Firebase Cloud (Google Sign-In)'}
+          >
+            <Cloud className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+            <span className="hidden sm:inline text-[11px] font-bold">
+              {isAr ? 'مزامنة السحابة' : 'Cloud Sync'}
+            </span>
+          </button>
+        )}
 
         {/* Profile Avatar Badge */}
         <div className="flex items-center gap-1.5 pl-1 sm:pl-2 border-l border-slate-800 shrink-0">

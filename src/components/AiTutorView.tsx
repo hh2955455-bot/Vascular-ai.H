@@ -23,7 +23,14 @@ import {
   AlertTriangle,
   X,
   Stethoscope,
-  Scissors
+  Scissors,
+  Volume2,
+  VolumeX,
+  Smile,
+  ThumbsUp,
+  Heart,
+  Flame,
+  MessageSquare
 } from 'lucide-react';
 
 export const AiTutorView: React.FC = () => {
@@ -67,6 +74,85 @@ export const AiTutorView: React.FC = () => {
   const [evarNeckLength, setEvarNeckLength] = useState<number>(18);
   const [evarNeckAngle, setEvarNeckAngle] = useState<number>(30);
   const [evarDiameter, setEvarDiameter] = useState<number>(24);
+
+  // Speech & Emoji states
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [activeEmojiCategory, setActiveEmojiCategory] = useState<'medical' | 'expressions' | 'praise'>('medical');
+
+  // Quick Emoji palette
+  const quickEmojis = ['🫀', '🩺', '🩸', '⚡', '💡', '🎯', '⚠️', '📌', '✅', '💊', '🧠', '🔪', '👏', '❤️', '👍'];
+
+  // Categorized Emojis
+  const emojiCategories = [
+    {
+      id: 'medical' as const,
+      label: isAr ? 'أوعية وتشريح 🫀' : 'Vascular & Medical 🫀',
+      emojis: ['🫀', '🩺', '🩸', '🔪', '🧠', '💊', '🩹', '🏥', '🔬', '📋', '🦴', '🩻', '💉', '🧬', '🦵', '🦶']
+    },
+    {
+      id: 'expressions' as const,
+      label: isAr ? 'إشارات سريرية 💡' : 'Clinical Cues 💡',
+      emojis: ['💡', '⚡', '🎯', '⚠️', '📌', '✅', '💎', '🔍', '📊', '📈', '🚨', '⏱️', '🛡️', '❓']
+    },
+    {
+      id: 'praise' as const,
+      label: isAr ? 'تفاعل وتشجيع 👏' : 'Reactions & Praise 👏',
+      emojis: ['👏', '❤️', '👍', '🔥', '🌟', '✨', '💯', '🎓', '🚀', '🤝', '🙌', '🤔', '😊', '🎉']
+    }
+  ];
+
+  // Expressive speech synthesis
+  const handleSpeak = (msgId: string, textToSpeak: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      showNotification(isAr ? 'المتصفح لا يدعم النطق الصوتي المباشر.' : 'Speech synthesis not supported in this browser.');
+      return;
+    }
+
+    if (speakingMessageId === msgId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    // Clean markdown and prepare expressive phrasing
+    const cleanText = textToSpeak
+      .replace(/#+\s+/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/\[.*?\]\(.*?\)/g, '')
+      .replace(/[-*]\s+/g, ' ');
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    const hasArabic = /[\u0600-\u06FF]/.test(cleanText);
+    utterance.lang = hasArabic ? 'ar-SA' : 'en-US';
+    utterance.rate = 0.95;
+    utterance.pitch = 1.05;
+
+    utterance.onend = () => setSpeakingMessageId(null);
+    utterance.onerror = () => setSpeakingMessageId(null);
+
+    setSpeakingMessageId(msgId);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleInsertEmoji = (emoji: string) => {
+    setInputPrompt(prev => prev + emoji);
+  };
+
+  const handleToggleReaction = (msgId: string, emoji: string) => {
+    setMessages(prev =>
+      prev.map(m => {
+        if (m.id === msgId) {
+          const currentReactions = { ...(m.reactions || {}) };
+          currentReactions[emoji] = (currentReactions[emoji] || 0) + 1;
+          return { ...m, reactions: currentReactions };
+        }
+        return m;
+      })
+    );
+  };
 
   const [messages, setMessages] = useState<TutorMessage[]>([
     {
@@ -765,12 +851,34 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
                   </div>
                 )}
 
-                {/* Helpful Actions Bar */}
+                {/* Helpful Actions Bar & Voice Narration */}
                 {!isUser && !msg.isStreaming && (
-                  <div className="mt-4 pt-3 border-t border-slate-800 flex flex-wrap items-center gap-2">
+                  <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2">
+                    {/* Voice Read Aloud with Expressive Speech */}
+                    <button
+                      onClick={() => handleSpeak(msg.id, (isAr || isBilingual) && msg.textAr ? msg.textAr : msg.textEn)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer border ${
+                        speakingMessageId === msg.id
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
+                          : 'bg-teal-50 dark:bg-slate-800 hover:bg-teal-100 dark:hover:bg-slate-750 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-slate-700'
+                      }`}
+                      title={speakingMessageId === msg.id ? (isAr ? 'إيقاف النطق' : 'Stop Narration') : (isAr ? 'نطق الكلام بصوت معبر 🔊' : 'Expressive Read Aloud 🔊')}
+                    >
+                      {speakingMessageId === msg.id ? (
+                        <VolumeX className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5 text-teal-500 shrink-0" />
+                      )}
+                      <span>
+                        {speakingMessageId === msg.id
+                          ? (isAr ? 'إيقاف الصوت ⏹️' : 'Stop')
+                          : (isAr ? 'نطق تعبيري 🔊' : 'Listen 🔊')}
+                      </span>
+                    </button>
+
                     <button
                       onClick={() => handleExplainSimply(msg.textEn)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer"
                     >
                       <Zap className="w-3.5 h-3.5" />
                       <span>{isAr ? 'اشرح ببساطة' : 'Explain Simply'}</span>
@@ -778,7 +886,7 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
 
                     <button
                       onClick={() => handleSaveAsNote(msg)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-emerald-600 dark:text-emerald-400 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition cursor-pointer"
                     >
                       <FilePlus className="w-3.5 h-3.5" />
                       <span>Save Note</span>
@@ -786,7 +894,7 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
 
                     <button
                       onClick={() => handleConvertToFlashcard(msg)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-teal-600 dark:text-teal-400 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition cursor-pointer"
                     >
                       <Layers className="w-3.5 h-3.5" />
                       <span>Flashcard</span>
@@ -796,7 +904,7 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
                       onClick={() => {
                         handleSend(`Generate 3 difficult board exam MCQs based on: ${msg.textEn.slice(0, 200)}`);
                       }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-purple-600 dark:text-purple-400 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition cursor-pointer"
                     >
                       <HelpCircle className="w-3.5 h-3.5" />
                       <span>Quiz Me (MCQs)</span>
@@ -806,7 +914,7 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
                       onClick={() => {
                         setActiveTab('anatomy');
                       }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-400 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition cursor-pointer"
                     >
                       <Scissors className="w-3.5 h-3.5" />
                       <span>View Anatomy</span>
@@ -814,11 +922,41 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
 
                     <button
                       onClick={() => handleCopyText(msg.textEn)}
-                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition cursor-pointer"
                       title="Copy response"
                     >
                       <Copy className="w-3.5 h-3.5" />
                     </button>
+                  </div>
+                )}
+
+                {/* Message Emoji Reactions Tray */}
+                {!isUser && !msg.isStreaming && (
+                  <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-850 flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-slate-400 font-medium mr-1">
+                      {isAr ? 'تفاعل:' : 'React:'}
+                    </span>
+                    {['❤️', '👍', '💡', '🩺', '🧠', '👏', '🔥'].map(emoji => {
+                      const count = msg.reactions?.[emoji] || 0;
+                      return (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => handleToggleReaction(msg.id, emoji)}
+                          className={`px-2 py-0.5 rounded-full text-xs transition cursor-pointer border flex items-center gap-1 ${
+                            count > 0
+                              ? 'bg-teal-50 dark:bg-teal-500/20 border-teal-300 dark:border-teal-500/50 text-teal-700 dark:text-teal-200 scale-105'
+                              : 'bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700/60 text-slate-600 dark:text-slate-300'
+                          }`}
+                          title={`React with ${emoji}`}
+                        >
+                          <span>{emoji}</span>
+                          {count > 0 && (
+                            <span className="font-mono text-[10px] font-bold">{count}</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -829,44 +967,128 @@ Use the **Clinical Tools** bar above for instant Heparin IV calculations, Ruther
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Chat Input Bar */}
-      <form
-        onSubmit={e => {
-          e.preventDefault();
-          handleSend();
-        }}
-        className="relative flex items-center bg-slate-900 border border-slate-700/80 rounded-2xl shadow-xl p-1.5 focus-within:border-teal-500/80 transition"
-      >
-        <textarea
-          value={inputPrompt}
-          onChange={e => setInputPrompt(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          placeholder={
-            isAr
-              ? 'اطرح سؤالاً في جراحة الأوعية (مثال: احسب جرعة الهيبارين، صنف رذرفورد، أو متلازمة الحجرات)...'
-              : 'Ask a vascular surgical question (e.g., Heparin bolus dosing, Rutherford IIb protocol, CEA criteria, or Fasciotomy planes)...'
-          }
-          className="flex-1 bg-transparent px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-hidden resize-none max-h-32 min-h-[44px]"
-          rows={1}
-        />
+      {/* Interactive Quick Emojis & Expression Bar */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-1 overflow-x-auto pb-0.5 px-1 scrollbar-none">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+            <span className="text-[10px] font-bold text-teal-500 dark:text-teal-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
+              <span>🩺</span>
+              <span className="hidden sm:inline">{isAr ? 'ايموجي سريع:' : 'Quick Emojis:'}</span>
+            </span>
+            {quickEmojis.map(emoji => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => handleInsertEmoji(emoji)}
+                className="text-sm sm:text-base hover:scale-130 transition-transform p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer shrink-0"
+                title={`Insert ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
 
-        <button
-          type="submit"
-          disabled={!inputPrompt.trim() || isLoading}
-          className={`p-3 rounded-xl font-bold transition flex items-center justify-center shrink-0 cursor-pointer ${
-            inputPrompt.trim() && !isLoading
-              ? 'bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/40'
-              : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-          }`}
+          <button
+            type="button"
+            onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)}
+            className={`px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 transition cursor-pointer shrink-0 border ${
+              isEmojiPickerOpen
+                ? 'bg-teal-600 text-white border-teal-500 shadow-sm'
+                : 'bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+            }`}
+          >
+            <Smile className="w-3.5 h-3.5 text-amber-500" />
+            <span className="text-[11px]">{isAr ? 'كل التعبيرات' : 'All Emojis'}</span>
+          </button>
+        </div>
+
+        {/* Extended Categorized Emoji Drawer */}
+        {isEmojiPickerOpen && (
+          <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-teal-500/40 shadow-xl space-y-2.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
+            {/* Category tabs */}
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+              <div className="flex items-center gap-1">
+                {emojiCategories.map(cat => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setActiveEmojiCategory(cat.id)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      activeEmojiCategory === cat.id
+                        ? 'bg-teal-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEmojiPickerOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Emoji Grid */}
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
+              {emojiCategories
+                .find(c => c.id === activeEmojiCategory)
+                ?.emojis.map((emoji, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleInsertEmoji(emoji)}
+                    className="w-8 h-8 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-slate-700 flex items-center justify-center text-base hover:scale-125 transition-transform cursor-pointer border border-slate-200 dark:border-slate-750"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Chat Input Bar */}
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            handleSend();
+          }}
+          className="relative flex items-center bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-2xl shadow-xl p-1.5 focus-within:border-teal-500/80 transition"
         >
-          <Send className="w-4 h-4" />
-        </button>
-      </form>
+          <textarea
+            value={inputPrompt}
+            onChange={e => setInputPrompt(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={
+              isAr
+                ? 'اطرح سؤالاً في جراحة الأوعية (مثال: 🫀 احسب جرعة الهيبارين، صنف رذرفورد ⚡، أو متلازمة الحجرات ⚠️)...'
+                : 'Ask a vascular surgical question (e.g., 🫀 Heparin bolus dosing, Rutherford IIb protocol ⚡, CEA criteria)...'
+            }
+            className="flex-1 bg-transparent px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-hidden resize-none max-h-32 min-h-[44px]"
+            rows={1}
+          />
+
+          <button
+            type="submit"
+            disabled={!inputPrompt.trim() || isLoading}
+            className={`p-3 rounded-xl font-bold transition flex items-center justify-center shrink-0 cursor-pointer ${
+              inputPrompt.trim() && !isLoading
+                ? 'bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/40'
+                : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+            }`}
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
+      </div>
     </div>
   );
 };

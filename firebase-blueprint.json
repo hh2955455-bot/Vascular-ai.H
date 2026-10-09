@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and vascular learning analytics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "specialty": { "type": "string", "maxLength": 100 },
+        "studyLevel": { "type": "string", "enum": ["student", "resident", "fellow", "consultant"] },
+        "preferredLanguage": { "type": "string", "enum": ["en", "ar", "bilingual"] },
+        "streakDays": { "type": "number" },
+        "totalStudyHours": { "type": "number" },
+        "mcqsCompleted": { "type": "number" },
+        "mcqAccuracy": { "type": "number" },
+        "flashcardsMastered": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "studyLevel", "preferredLanguage"]
+    },
+    "StudyNote": {
+      "title": "StudyNote",
+      "description": "Vascular surgery study note created by the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "titleAr": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "enum": ["Arterial", "Venous", "Aorta", "Carotid", "Trauma", "Dialysis", "General"] },
+        "summary": { "type": "string", "maxLength": 1000 },
+        "detailedContent": { "type": "string", "maxLength": 50000 },
+        "isFavorite": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "category", "detailedContent"]
+    },
+    "Flashcard": {
+      "title": "Flashcard",
+      "description": "Spaced repetition flashcard for vascular surgery",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "topic": { "type": "string", "maxLength": 200 },
+        "subtopic": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "enum": ["Arterial", "Venous", "Aorta", "Carotid", "Trauma", "Dialysis", "General"] },
+        "difficulty": { "type": "string", "enum": ["Basic", "Intermediate", "Advanced"] },
+        "frontEn": { "type": "string", "maxLength": 2000 },
+        "frontAr": { "type": "string", "maxLength": 2000 },
+        "backEn": { "type": "string", "maxLength": 5000 },
+        "backAr": { "type": "string", "maxLength": 5000 },
+        "referenceCitation": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["new", "learning", "mastered"] },
+        "reviewCount": { "type": "number" },
+        "lastReviewed": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "topic", "category", "frontEn", "backEn", "status"]
+    },
+    "UserBook": {
+      "title": "UserBook",
+      "description": "Complete medical textbook or guideline uploaded by the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 250 },
+        "shortTitle": { "type": "string", "maxLength": 100 },
+        "edition": { "type": "string", "maxLength": 50 },
+        "authors": { "type": "string", "maxLength": 200 },
+        "year": { "type": "number" },
+        "type": { "type": "string", "enum": ["textbook", "guideline", "review", "notes"] },
+        "coverColor": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["indexed", "processing", "ready"] },
+        "totalPages": { "type": "number" },
+        "chaptersCount": { "type": "number" },
+        "chunksCount": { "type": "number" },
+        "isUserUploaded": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "shortTitle", "type", "status", "totalPages", "isUserUploaded"]
+    },
+    "UserBookChunk": {
+      "title": "UserBookChunk",
+      "description": "Full text chunk of an uploaded book preserving complete book content",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "bookId": { "type": "string", "maxLength": 128 },
+        "chunk_id": { "type": "string", "maxLength": 128 },
+        "document_id": { "type": "string", "maxLength": 128 },
+        "document_title": { "type": "string", "maxLength": 250 },
+        "chapter": { "type": "string", "maxLength": 250 },
+        "section": { "type": "string", "maxLength": 250 },
+        "page_number": { "type": "number" },
+        "content": { "type": "string", "maxLength": 50000 },
+        "contentAr": { "type": "string", "maxLength": 50000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "bookId", "document_id", "chapter", "page_number", "content"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile data and clinical analytics"
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": "StudyNote",
+      "description": "User clinical vascular notes"
+    },
+    "/users/{userId}/flashcards/{flashcardId}": {
+      "schema": "Flashcard",
+      "description": "User vascular surgery flashcards"
+    },
+    "/users/{userId}/books/{bookId}": {
+      "schema": "UserBook",
+      "description": "User uploaded full books and reference manuals"
+    },
+    "/users/{userId}/books/{bookId}/chunks/{chunkId}": {
+      "schema": "UserBookChunk",
+      "description": "Complete text and sections of uploaded books"
+    }
+  }
+}

@@ -13,6 +13,29 @@ import { INITIAL_REFERENCES } from '../data/referencesData';
 import { INITIAL_FLASHCARDS } from '../data/flashcardData';
 import { VASCULAR_MCQS } from '../data/mcqData';
 import { CLINICAL_CASES } from '../data/clinicalCasesData';
+import {
+  auth,
+  db,
+  googleProvider,
+  handleFirestoreError,
+  OperationType
+} from '../services/firebase';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  User
+} from 'firebase/auth';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  getDocs
+} from 'firebase/firestore';
+import { fetchUserBooksFromFirestore } from '../services/bookUploadService';
 
 export type ActiveTab =
   | 'dashboard'
@@ -68,6 +91,11 @@ interface AppContextType {
   setTutorInitialPrompt: (prompt: string | null) => void;
   searchInitialQuery: string | null;
   setSearchInitialQuery: (q: string | null) => void;
+  // Firebase Auth additions
+  firebaseUser: User | null;
+  isAuthLoading: boolean;
+  signInWithGoogle: () => Promise<void>;
+  signOutUser: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -167,7 +195,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [languageMode, setLanguageMode] = useState<LanguageMode>('bilingual');
   const [explanationLevel, setExplanationLevel] = useState<ExplanationLevel>('Resident Level');
-  const [darkMode, setDarkMode] = useState<boolean>(true);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('vascular_theme');
+      return saved ? saved === 'dark' : true;
+    } catch {
+      return true;
+    }
+  });
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_PROFILE);
   const [references, setReferences] = useState<ReferenceDocument[]>(INITIAL_REFERENCES);
   const [selectedDocForReader, setSelectedDocForReader] = useState<ReferenceDocument | null>(null);
@@ -184,12 +219,112 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [tutorInitialPrompt, setTutorInitialPrompt] = useState<string | null>(null);
   const [searchInitialQuery, setSearchInitialQuery] = useState<string | null>(null);
 
-  // Sync dark mode class on document
+  // Firebase Auth State
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  // Subscribe to Firebase Auth changes
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+      setIsAuthLoading(false);
+
+      if (user) {
+        // Load User Profile from Firestore
+        const userDocRef = doc(db, 'users', user.uid);
+        try {
+          const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+            const data = userDoc.data() as UserProfile;
+            setUserProfile(prev => ({ ...prev, ...data }));
+          } else {
+            // Initialize new user profile
+            const newProfile: UserProfile = {
+              id: user.uid,
+              name: user.displayName || 'Vascular Surgeon',
+              email: user.email || '',
+              specialty: 'Vascular Surgery Resident',
+              studyLevel: 'resident',
+              preferredLanguage: 'bilingual',
+              streakDays: 1,
+              totalStudyHours: 0,
+              mcqsCompleted: 0,
+              mcqAccuracy: 0,
+              flashcardsMastered: 0
+            };
+            await setDoc(userDocRef, newProfile);
+            setUserProfile(newProfile);
+          }
+        } catch (err) {
+          console.warn('Could not read user profile from Firestore:', err);
+        }
+
+        // Fetch User Books from Firestore
+        try {
+          const cloudBooks = await fetchUserBooksFromFirestore(user.uid);
+          if (cloudBooks.length > 0) {
+            setReferences(prev => {
+              const existingIds = new Set(prev.map(b => b.id));
+              const newBooks = cloudBooks.filter(b => !existingIds.has(b.id));
+              return [...newBooks, ...prev];
+            });
+          }
+        } catch (err) {
+          console.warn('Error loading cloud books:', err);
+        }
+
+        // Fetch User Notes from Firestore
+        try {
+          const notesSnap = await getDocs(collection(db, 'users', user.uid, 'notes'));
+          if (!notesSnap.empty) {
+            const cloudNotes: StudyNote[] = notesSnap.docs.map(d => d.data() as StudyNote);
+            setNotes(prev => {
+              const existingIds = new Set(cloudNotes.map(n => n.id));
+              const remaining = prev.filter(n => !existingIds.has(n.id));
+              return [...cloudNotes, ...remaining];
+            });
+          }
+        } catch (err) {
+          console.warn('Error loading cloud notes:', err);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const signInWithGoogle = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+      showNotification('Signed in with Google successfully.');
+    } catch (error: any) {
+      console.error('Google Sign In failed:', error);
+      showNotification(error?.message || 'Google sign-in was cancelled or failed.');
+    }
+  };
+
+  const signOutUser = async () => {
+    try {
+      await signOut(auth);
+      setFirebaseUser(null);
+      showNotification('Signed out.');
+    } catch (error: any) {
+      console.error('Sign Out failed:', error);
+    }
+  };
+
+  // Sync dark mode class on document and persist
+  useEffect(() => {
+    try {
+      if (darkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('vascular_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('vascular_theme', 'light');
+      }
+    } catch {
+      // ignore in iframe
     }
   }, [darkMode]);
 
@@ -221,39 +356,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 4000);
   };
 
-  const updateUserProfile = (partial: Partial<UserProfile>) => {
-    setUserProfile(prev => ({ ...prev, ...partial }));
+  const updateUserProfile = async (partial: Partial<UserProfile>) => {
+    setUserProfile(prev => {
+      const updated = { ...prev, ...partial };
+      if (firebaseUser) {
+        setDoc(doc(db, 'users', firebaseUser.uid), updated, { merge: true }).catch(err => {
+          console.warn('Failed to sync profile update:', err);
+        });
+      }
+      return updated;
+    });
   };
 
-  const addReference = (doc: ReferenceDocument) => {
-    setReferences(prev => [doc, ...prev]);
-    showNotification(`"${doc.title}" processed and indexed successfully.`);
+  const addReference = (docItem: ReferenceDocument) => {
+    setReferences(prev => [docItem, ...prev]);
+    showNotification(`"${docItem.title}" processed and indexed successfully.`);
   };
 
-  const addNote = (note: StudyNote) => {
+  const addNote = async (note: StudyNote) => {
     setNotes(prev => [note, ...prev]);
     showNotification(`Note "${note.title}" saved.`);
+    if (firebaseUser) {
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid, 'notes', note.id), {
+          ...note,
+          userId: firebaseUser.uid,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.warn('Failed to sync note to Firestore:', err);
+      }
+    }
   };
 
-  const updateNote = (id: string, updated: Partial<StudyNote>) => {
+  const updateNote = async (id: string, updated: Partial<StudyNote>) => {
     setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updated, updatedAt: new Date().toISOString() } : n));
     showNotification('Note updated successfully.');
+    if (firebaseUser) {
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid, 'notes', id), {
+          ...updated,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (err) {
+        console.warn('Failed to update note in Firestore:', err);
+      }
+    }
   };
 
-  const deleteNote = (id: string) => {
+  const deleteNote = async (id: string) => {
     setNotes(prev => prev.filter(n => n.id !== id));
     showNotification('Note removed.');
+    if (firebaseUser) {
+      try {
+        await deleteDoc(doc(db, 'users', firebaseUser.uid, 'notes', id));
+      } catch (err) {
+        console.warn('Failed to delete note from Firestore:', err);
+      }
+    }
   };
 
-  const updateFlashcardStatus = (id: string, status: 'learning' | 'mastered') => {
+  const updateFlashcardStatus = async (id: string, status: 'learning' | 'mastered') => {
     setFlashcards(prev => prev.map(fc => {
       if (fc.id === id) {
-        return {
+        const updated = {
           ...fc,
           status,
           reviewCount: fc.reviewCount + 1,
           lastReviewed: new Date().toISOString()
         };
+        if (firebaseUser) {
+          setDoc(doc(db, 'users', firebaseUser.uid, 'flashcards', id), {
+            ...updated,
+            userId: firebaseUser.uid
+          }, { merge: true }).catch(console.warn);
+        }
+        return updated;
       }
       return fc;
     }));
@@ -262,9 +440,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addFlashcard = (card: Flashcard) => {
+  const addFlashcard = async (card: Flashcard) => {
     setFlashcards(prev => [card, ...prev]);
     showNotification(`Flashcard added to deck.`);
+    if (firebaseUser) {
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid, 'flashcards', card.id), {
+          ...card,
+          userId: firebaseUser.uid
+        });
+      } catch (err) {
+        console.warn('Failed to save flashcard to Firestore:', err);
+      }
+    }
   };
 
   const addMcq = (mcq: MCQQuestion) => {
@@ -315,6 +503,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTutorInitialPrompt,
         searchInitialQuery,
         setSearchInitialQuery,
+        firebaseUser,
+        isAuthLoading,
+        signInWithGoogle,
+        signOutUser,
       }}
     >
       {children}
