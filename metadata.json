@@ -1,0 +1,6 @@
+{
+  "name": "Vascular AI Study Assistant",
+  "description": "Bilingual AI-powered vascular surgery & vascular medicine study workspace, RAG reference library, interactive anatomy explorer, clinical cases, MCQs, and flashcards.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

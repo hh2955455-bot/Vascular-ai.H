@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vascular AI Study Assistant - Vascular Surgery Workspace</title>
+    <meta name="description" content="Bilingual AI-powered vascular surgery & vascular medicine study workspace, RAG reference library, interactive anatomy explorer, clinical cases, MCQs, and flashcards." />
+    <meta property="og:title" content="Vascular AI Study Assistant" />
+    <meta property="og:description" content="Bilingual AI-powered vascular surgery & vascular medicine study workspace, RAG reference library, interactive anatomy explorer, clinical cases, MCQs, and flashcards." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // Suppress Vite HMR / preview proxy WebSocket disconnections
+      window.addEventListener('error', function(e) {
+        if (e && (e.message?.includes?.('WebSocket') || String(e.error)?.includes?.('WebSocket'))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e && (String(e.reason)?.includes?.('WebSocket') || e.reason?.message?.includes?.('WebSocket'))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
+    </script>
+  </head>
+  <body class="h-full bg-slate-950 text-slate-100 antialiased font-sans">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
