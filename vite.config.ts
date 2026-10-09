@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/vasular-ai.H./',
+    base: '/vasular-ai.H.../',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
