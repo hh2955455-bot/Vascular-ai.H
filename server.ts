@@ -26,6 +26,15 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 // In-memory query cache for instant responses (< 5ms) on repeated lookups
 const responseCache = new Map<string, { text: string; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 30; // 30 minutes
+const CACHE_MAX_ENTRIES = 150; // keep memory low on small hosts (book prompts can be large)
+const _origCacheSet = responseCache.set.bind(responseCache);
+responseCache.set = (key: string, value: { text: string; timestamp: number }) => {
+  if (responseCache.size >= CACHE_MAX_ENTRIES) {
+    const oldest = responseCache.keys().next().value;
+    if (oldest !== undefined) responseCache.delete(oldest);
+  }
+  return _origCacheSet(key, value);
+};
 
 // Initialize GoogleGenAI server-side with User-Agent header for telemetry
 let ai: GoogleGenAI | null = null;
@@ -772,6 +781,45 @@ Formatting rules:
     });
   }
 });
+
+// Large-book PDF upload: receives the PDF as RAW BYTES (no base64, no JSON), so books of
+// hundreds of MB no longer blow up memory. Returns the text page by page with real page numbers.
+app.post(
+  '/api/parse-pdf-raw',
+  express.raw({ type: () => true, limit: '1gb' }),
+  async (req: Request, res: Response) => {
+    try {
+      const buffer: Buffer = req.body;
+      if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 8) {
+        return res.status(400).json({ error: 'PDF bytes are required' });
+      }
+      const fileName = decodeURIComponent(String(req.header('x-file-name') || 'Medical_Reference.pdf'));
+
+      const { PDFParse } = await import('pdf-parse');
+      const parser = new PDFParse({ data: buffer });
+      const textResult = await parser.getText();
+      await parser.destroy();
+
+      const pages = (textResult.pages || []).map((p: any, idx: number) => ({
+        pageNumber: p.num || idx + 1,
+        text: (p.text || '').trim(),
+      }));
+      const totalPages = textResult.total || pages.length || 1;
+      const charCount = pages.reduce((n, p) => n + p.text.length, 0);
+      const emptyPages = pages.filter(p => p.text.length < 20).length;
+
+      console.log(`[parse-pdf-raw] "${fileName}": ${(buffer.length / 1048576).toFixed(1)} MB, ${totalPages} pages, ${charCount.toLocaleString()} chars, ${emptyPages} empty pages`);
+
+      return res.json({ success: true, fileName, totalPages, charCount, emptyPages, pages });
+    } catch (err: any) {
+      console.error('Error in /api/parse-pdf-raw:', err);
+      return res.status(500).json({
+        error: 'PDF parsing failed on server',
+        details: err?.message || String(err),
+      });
+    }
+  }
+);
 
 // Full Document Ingestion & PDF Parser Endpoint (100% Unabridged Page Extraction)
 app.post('/api/parse-pdf', async (req: Request, res: Response) => {

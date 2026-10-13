@@ -37,7 +37,8 @@ import {
   updateDoc,
   deleteDoc,
   collection,
-  getDocs
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { fetchUserBooksFromFirestore } from '../services/bookUploadService';
 
@@ -588,7 +589,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (firebaseUser) {
       try {
-        await deleteDoc(doc(db, 'users', firebaseUser.uid, 'uploaded_books', docId));
+        // Delete the book's chunks first (in batches), then the book itself
+        const chunksSnap = await getDocs(collection(db, 'users', firebaseUser.uid, 'books', docId, 'chunks'));
+        for (let i = 0; i < chunksSnap.docs.length; i += 400) {
+          const batch = writeBatch(db);
+          chunksSnap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+        await deleteDoc(doc(db, 'users', firebaseUser.uid, 'books', docId));
       } catch (err) {
         console.warn('Failed to delete book from Firestore:', err);
       }
