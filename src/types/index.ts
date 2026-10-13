@@ -95,6 +95,7 @@ export interface Flashcard {
   status: 'new' | 'learning' | 'mastered';
   reviewCount: number;
   lastReviewed?: string;
+  sourceOrigin?: 'books' | 'external' | 'studied_part';
 }
 
 export interface MCQOption {
@@ -116,6 +117,7 @@ export interface MCQQuestion {
   explanationAr?: string;
   surgicalPearls?: string;
   referenceCitation: string;
+  sourceOrigin?: 'books' | 'external_board' | 'studied_part';
 }
 
 export interface ClinicalCaseStep {
@@ -197,7 +199,32 @@ export interface TutorMessage {
   isSimplified?: boolean;
   algorithmData?: string[];
   hasMedicalDiagram?: boolean;
+  diagrams?: any[];
+  videos?: any[];
+  isWebGrounded?: boolean;
+  externalWebSources?: { title: string; url: string }[];
   followUpQuestions?: string[];
+  topicMcqs?: {
+    id: string;
+    topic: string;
+    questionEn: string;
+    questionAr?: string;
+    options: { id: 'A' | 'B' | 'C' | 'D'; textEn: string; textAr?: string }[];
+    correctAnswer: 'A' | 'B' | 'C' | 'D';
+    explanationEn: string;
+    explanationAr?: string;
+    pearl?: string;
+  }[];
+  topicFlashcards?: {
+    id: string;
+    topic: string;
+    frontEn: string;
+    frontAr?: string;
+    backEn: string;
+    backAr?: string;
+    category?: string;
+    difficulty?: 'Basic' | 'Intermediate' | 'Advanced';
+  }[];
   isStreaming?: boolean;
   reactions?: Record<string, number>;
 }

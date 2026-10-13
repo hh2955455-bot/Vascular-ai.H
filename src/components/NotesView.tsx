@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { StudyNote } from '../types';
 import { generateStudyNoteFromAi } from '../services/aiService';
+import { GenerateTopicMaterialModal } from './GenerateTopicMaterialModal';
 import {
   FileText,
   Plus,
@@ -37,6 +38,11 @@ export const NotesView: React.FC = () => {
   const [isGeneratorOpen, setIsGeneratorOpen] = useState(false);
   const [generatorTopic, setGeneratorTopic] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // Studied Topic Material Generator Modal State
+  const [isTopicModalOpen, setIsTopicModalOpen] = useState(false);
+  const [selectedTopicForModal, setSelectedTopicForModal] = useState('');
+  const [topicModalExcerpt, setTopicModalExcerpt] = useState('');
 
   const categories = ['All', 'Arterial', 'Aorta', 'Carotid', 'Venous', 'Trauma', 'Dialysis'];
 
@@ -333,6 +339,19 @@ export const NotesView: React.FC = () => {
                   )}
 
                   <button
+                    onClick={() => {
+                      setSelectedTopicForModal(selectedNote.title);
+                      setTopicModalExcerpt(selectedNote.summary || selectedNote.keyPoints?.join(', '));
+                      setIsTopicModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500/20 to-purple-500/20 hover:from-teal-500/30 hover:to-purple-500/30 text-teal-300 hover:text-white border border-teal-500/40 text-xs font-bold transition cursor-pointer"
+                    title={isAr ? 'صنع أسئلة وفلاش كاردس لهذه الملاحظة' : 'Generate MCQs & Flashcards for this note'}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-teal-300" />
+                    <span>{isAr ? '🎯 صنع أسئلة وبطاقات' : '🎯 MCQs & Cards'}</span>
+                  </button>
+
+                  <button
                     onClick={() => handleExportMarkdown(selectedNote)}
                     className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer border border-slate-700"
                     title="Export as Markdown"
@@ -513,6 +532,14 @@ export const NotesView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Studied Note MCQs & Flashcards Modal */}
+      <GenerateTopicMaterialModal
+        isOpen={isTopicModalOpen}
+        onClose={() => setIsTopicModalOpen(false)}
+        topicTitle={selectedTopicForModal}
+        contentExcerpt={topicModalExcerpt}
+      />
     </div>
   );
 };

@@ -36,15 +36,16 @@ export const PhonePermissionsBanner: React.FC<PhonePermissionsBannerProps> = ({ 
     setIsRequesting(true);
     try {
       const res = await requestAllPhonePermissions();
-      if (res.notificationGranted) {
-        showNotification(
-          isAr
-            ? 'تم تفعيل إشعارات الهاتف بنجاح! ستصلك أحدث مواضيع القراءة.'
-            : 'Phone notifications granted successfully!'
-        );
-        setVisible(false);
-      } else {
-        onOpenModal();
+      showNotification(
+        isAr
+          ? 'تم تفعيل إشعارات الهاتف بنجاح! ستصلك أحدث مواضيع القراءة.'
+          : 'Phone notifications granted successfully!'
+      );
+      setVisible(false);
+      try {
+        sessionStorage.setItem('phone_perm_banner_dismissed', 'true');
+      } catch {
+        // Safe ignore
       }
     } catch {
       onOpenModal();

@@ -33,34 +33,35 @@ export const DashboardView: React.FC = () => {
   } = useApp();
 
   const isAr = languageMode === 'ar';
+  const uploadedBooksCount = references.filter(doc => doc.isUserUploaded).length;
 
   const continueStudyingCards = [
     {
       id: 'topic-ali',
       titleEn: 'Acute Limb Ischemia (ALI)',
       titleAr: 'إقفار الأطراف الحاد (ALI)',
-      chapter: "Rutherford Ch. 52 & ESVS 2024",
+      chapter: 'ESVS 2024 ALI Guidelines',
       progress: 65,
       color: 'from-amber-500 to-red-600',
-      actionPrompt: 'Let us review Acute Limb Ischemia: evaluation, Rutherford classification IIa vs IIb, and surgical embolectomy vs fasciotomy.'
+      actionPrompt: 'Let us review Acute Limb Ischemia: evaluation, Rutherford classification IIa vs IIb, and surgical embolectomy vs fasciotomy according to ESVS 2024.'
     },
     {
       id: 'topic-aaa',
       titleEn: 'Abdominal Aortic Aneurysm (AAA)',
       titleAr: 'تمدد الشريان الأورطي البطني (AAA)',
-      chapter: 'SVS & ESVS Guidelines 2023',
+      chapter: 'ESVS 2024 AAA Guidelines',
       progress: 40,
       color: 'from-blue-600 to-indigo-700',
-      actionPrompt: 'Review Abdominal Aortic Aneurysms: repair diameter thresholds (5.5cm/5.0cm), EVAR anatomical criteria, and permissive hypotension in rupture.'
+      actionPrompt: 'Review Abdominal Aortic Aneurysms: repair diameter thresholds (5.5cm/5.0cm), EVAR anatomical criteria, and permissive hypotension in rupture per ESVS 2024.'
     },
     {
       id: 'topic-carotid',
       titleEn: 'Carotid Endarterectomy & Stenting',
       titleAr: 'استئصال باطنة السباتي ودعاماته',
-      chapter: 'NASCET & ESVS 2023 Guidelines',
+      chapter: 'ESVS 2023 Carotid Guidelines',
       progress: 80,
       color: 'from-teal-500 to-emerald-700',
-      actionPrompt: 'Review Carotid Endarterectomy: timing after TIA (<14 days), NASCET criteria, and cranial nerves at risk (XII, X, VII).'
+      actionPrompt: 'Review Carotid Endarterectomy: timing after TIA (<14 days), NASCET criteria, and cranial nerves at risk (XII, X, VII) according to ESVS 2023.'
     }
   ];
 
@@ -124,9 +125,9 @@ export const DashboardView: React.FC = () => {
             >
               <div className="flex items-center justify-center gap-1.5 text-teal-400 mb-1 group-hover:scale-110 transition">
                 <Library className="w-4 h-4" />
-                <span className="text-lg font-extrabold text-white">{references.length}</span>
+                <span className="text-lg font-extrabold text-white">{uploadedBooksCount > 0 ? uploadedBooksCount : 0}</span>
               </div>
-              <p className="text-[11px] text-teal-300 font-bold">{isAr ? 'كتب ومراجع' : 'Active Books'}</p>
+              <p className="text-[11px] text-teal-300 font-bold">{isAr ? 'الكتب المرفوعة' : 'Uploaded Books'}</p>
             </button>
             <div className="p-3.5 rounded-2xl bg-slate-800/80 border border-slate-700/80 text-center">
               <div className="flex items-center justify-center gap-1 text-amber-400 mb-1">
@@ -167,7 +168,7 @@ export const DashboardView: React.FC = () => {
               <Library className="w-5 h-5" />
             </div>
             <span className="text-xs font-bold text-teal-200">{isAr ? 'الكتب المرفوعة' : 'Uploaded Books'}</span>
-            <span className="text-[10px] text-teal-400 font-mono font-semibold">{references.length} {isAr ? 'مراجع متاحة' : 'Indexed'}</span>
+            <span className="text-sm font-black text-teal-300 font-mono mt-1">{uploadedBooksCount > 0 ? uploadedBooksCount : 0}</span>
           </button>
 
           <button

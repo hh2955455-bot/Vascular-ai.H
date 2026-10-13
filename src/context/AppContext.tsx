@@ -18,11 +18,15 @@ import {
   db,
   googleProvider,
   handleFirestoreError,
-  OperationType
+  OperationType,
+  executeGoogleSignIn,
+  resolveRedirectAuthResult,
+  detectMobilePlatform
 } from '../services/firebase';
+import { getResilientClinicalCases } from '../services/serviceWorker';
 import {
   onAuthStateChanged,
-  signInWithPopup,
+  getRedirectResult,
   signOut,
   User
 } from 'firebase/auth';
@@ -63,6 +67,7 @@ interface AppContextType {
   updateUserProfile: (partial: Partial<UserProfile>) => void;
   references: ReferenceDocument[];
   addReference: (doc: ReferenceDocument) => void;
+  deleteReference: (docId: string) => Promise<void>;
   selectedDocForReader: ReferenceDocument | null;
   setSelectedDocForReader: (doc: ReferenceDocument | null) => void;
   notes: StudyNote[];
@@ -70,10 +75,14 @@ interface AppContextType {
   updateNote: (id: string, updated: Partial<StudyNote>) => void;
   deleteNote: (id: string) => void;
   flashcards: Flashcard[];
+  setFlashcards: React.Dispatch<React.SetStateAction<Flashcard[]>>;
   updateFlashcardStatus: (id: string, status: 'learning' | 'mastered') => void;
   addFlashcard: (card: Flashcard) => void;
+  addMultipleFlashcards: (cards: Flashcard[]) => void;
   mcqs: MCQQuestion[];
+  setMcqs: React.Dispatch<React.SetStateAction<MCQQuestion[]>>;
   addMcq: (mcq: MCQQuestion) => void;
+  addMultipleMcqs: (questions: MCQQuestion[]) => void;
   clinicalCases: ClinicalCase[];
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (open: boolean) => void;
@@ -94,25 +103,45 @@ interface AppContextType {
   // Firebase Auth additions
   firebaseUser: User | null;
   isAuthLoading: boolean;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: (mode?: 'auto' | 'popup' | 'redirect') => Promise<void>;
   signOutUser: () => Promise<void>;
+  // Registration state
+  isRegistered: boolean;
+  setIsRegistered: (reg: boolean) => void;
+  isRegistrationModalOpen: boolean;
+  setIsRegistrationModalOpen: (open: boolean) => void;
+  // Black Box Audit Trail Modal State
+  isBlackBoxAuditOpen: boolean;
+  setIsBlackBoxAuditOpen: (open: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const INITIAL_PROFILE: UserProfile = {
-  id: 'usr-dr-01',
-  name: 'Dr. Tariq Al-Mansoor',
-  email: 'tariq.almansoor@vascular.med',
-  specialty: 'Vascular Surgery Resident',
-  studyLevel: 'resident',
-  preferredLanguage: 'bilingual',
-  streakDays: 14,
-  totalStudyHours: 42.5,
-  mcqsCompleted: 86,
-  mcqAccuracy: 78.4,
-  flashcardsMastered: 38
+const getSavedProfile = (): UserProfile => {
+  try {
+    const saved = localStorage.getItem('vascular_user_profile');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (err) {
+    console.warn('Could not read saved profile:', err);
+  }
+  return {
+    id: 'usr-dr-' + Math.random().toString(36).substring(2, 7),
+    name: '',
+    email: '',
+    specialty: 'جراحة الأوعية الدموية (Vascular Surgery)',
+    studyLevel: 'resident',
+    preferredLanguage: 'bilingual',
+    streakDays: 1,
+    totalStudyHours: 0,
+    mcqsCompleted: 0,
+    mcqAccuracy: 0,
+    flashcardsMastered: 0
+  };
 };
+
+const INITIAL_PROFILE: UserProfile = getSavedProfile();
 
 const INITIAL_NOTES: StudyNote[] = [
   {
@@ -203,18 +232,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return true;
     }
   });
+  const [isRegistered, setIsRegistered] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('vascular_user_registered') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('vascular_user_registered') !== 'true';
+    } catch {
+      return true;
+    }
+  });
+
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_PROFILE);
-  const [references, setReferences] = useState<ReferenceDocument[]>(INITIAL_REFERENCES);
+  const [references, setReferences] = useState<ReferenceDocument[]>(() => {
+    const esvsDocs = INITIAL_REFERENCES;
+    try {
+      const saved = localStorage.getItem('vascular_user_uploaded_books');
+      if (saved) {
+        const parsed: ReferenceDocument[] = JSON.parse(saved);
+        // Only keep user uploaded books, filter out obsolete non-ESVS default textbooks
+        const userBooks = parsed.filter(b => b.isUserUploaded && b.id !== 'rutherford-10th');
+        const existingIds = new Set(esvsDocs.map(d => d.id));
+        const newUploaded = userBooks.filter(b => !existingIds.has(b.id));
+        return [...newUploaded, ...esvsDocs];
+      }
+    } catch (e) {
+      console.warn('Could not load user uploaded books from storage:', e);
+    }
+    return esvsDocs;
+  });
   const [selectedDocForReader, setSelectedDocForReader] = useState<ReferenceDocument | null>(null);
   const [notes, setNotes] = useState<StudyNote[]>(INITIAL_NOTES);
   const [flashcards, setFlashcards] = useState<Flashcard[]>(INITIAL_FLASHCARDS);
   const [mcqs, setMcqs] = useState<MCQQuestion[]>(VASCULAR_MCQS);
-  const [clinicalCases] = useState<ClinicalCase[]>(CLINICAL_CASES);
+  const [clinicalCases, setClinicalCases] = useState<ClinicalCase[]>(CLINICAL_CASES);
+
+  // Sync clinical cases from Workbox offline cache and server API
+  useEffect(() => {
+    getResilientClinicalCases().then((loaded) => {
+      if (loaded && loaded.length > 0) {
+        setClinicalCases(loaded);
+      }
+    }).catch(() => {});
+  }, []);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMedicalDisclaimerOpen, setIsMedicalDisclaimerOpen] = useState(false);
   const [isBooksCatalogOpen, setIsBooksCatalogOpen] = useState(false);
   const [isContactDeveloperOpen, setIsContactDeveloperOpen] = useState(false);
   const [isPhonePermissionsOpen, setIsPhonePermissionsOpen] = useState(false);
+  const [isBlackBoxAuditOpen, setIsBlackBoxAuditOpen] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
   const [tutorInitialPrompt, setTutorInitialPrompt] = useState<string | null>(null);
   const [searchInitialQuery, setSearchInitialQuery] = useState<string | null>(null);
@@ -293,13 +363,118 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsubscribe();
   }, []);
 
-  const signInWithGoogle = async () => {
+  // Handle return from cross-platform signInWithRedirect (Android, iOS, WebViews, and Desktop)
+  useEffect(() => {
+    let isMounted = true;
+
+    const processRedirectResult = async () => {
+      let wasRedirectPending = false;
+      try {
+        if (typeof window !== 'undefined') {
+          wasRedirectPending =
+            sessionStorage.getItem('firebase_auth_redirect_pending') === 'true' ||
+            localStorage.getItem('firebase_auth_redirect_pending') === 'true';
+        }
+      } catch {
+        // Storage access may be restricted
+      }
+
+      if (wasRedirectPending) {
+        setIsAuthLoading(true);
+      }
+
+      try {
+        const result = await resolveRedirectAuthResult();
+        if (!isMounted) return;
+
+        if (result && result.user) {
+          const user = result.user;
+          setFirebaseUser(user);
+          const platform = detectMobilePlatform();
+          console.log(`[Firebase Auth] Successfully established user session on ${platform.platformName} for:`, user.email);
+
+          showNotification(
+            languageMode === 'ar'
+              ? `تم تسجيل الدخول بنجاح عبر حساب Google (${user.displayName || user.email})`
+              : `Signed in successfully via Google (${user.displayName || user.email})`
+          );
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        if (err?.code && err.code !== 'auth/null-user') {
+          console.warn('[Firebase Auth] Redirect result notice:', err);
+          if (err.code === 'auth/unauthorized-domain') {
+            showNotification(
+              languageMode === 'ar'
+                ? 'يرجى إضافة نطاق هذا الرابط في Firebase Console > Authentication > Settings > Authorized Domains.'
+                : 'Please add this domain to Firebase Console > Authentication > Settings > Authorized Domains.'
+            );
+          } else if (err.code !== 'auth/user-cancelled') {
+            showNotification(err.message || 'Authentication error.');
+          }
+        }
+      } finally {
+        if (isMounted && wasRedirectPending) {
+          setIsAuthLoading(false);
+        }
+      }
+    };
+
+    processRedirectResult();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [languageMode]);
+
+  const signInWithGoogle = async (mode: 'auto' | 'popup' | 'redirect' = 'auto') => {
+    setIsAuthLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
-      showNotification('Signed in with Google successfully.');
+      const user = await executeGoogleSignIn(mode);
+      if (user) {
+        setFirebaseUser(user);
+        showNotification(
+          languageMode === 'ar'
+            ? 'تم تسجيل الدخول بحساب Google بنجاح.'
+            : 'Signed in with Google successfully.'
+        );
+      }
+      // Note: If user is redirected on mobile/webview, execution transfers to Google login page
     } catch (error: any) {
+      // Gracefully handle deliberate user cancellations
+      const errString = `${error?.code || ''} ${error?.message || ''} ${String(error || '')}`;
+      if (
+        errString.includes('popup-closed-by-user') ||
+        errString.includes('cancelled-popup-request') ||
+        errString.includes('user-cancelled')
+      ) {
+        console.info('[Firebase Auth] Google Sign-In closed/cancelled by user.');
+        return;
+      }
+
       console.error('Google Sign In failed:', error);
-      showNotification(error?.message || 'Google sign-in was cancelled or failed.');
+      let errorMsg = languageMode === 'ar' ? 'تعذر تسجيل الدخول عبر Google.' : 'Failed to sign in with Google.';
+      if (error?.code === 'auth/unauthorized-domain') {
+        errorMsg = languageMode === 'ar'
+          ? 'النطاق غير مصرح به: يرجى إضافة هذا النطاق إلى Authorized Domains في Firebase Console.'
+          : 'Unauthorized domain: please add this domain to Authorized Domains in Firebase Console.';
+      } else if (error?.code === 'auth/popup-blocked') {
+        errorMsg = languageMode === 'ar'
+          ? 'المتصفح حظر النافذة المنبثقة. جاري التحويل عبر إعادة التوجيه...'
+          : 'Popup was blocked by mobile browser. Switching to redirect sign-in...';
+        showNotification(errorMsg);
+        await executeGoogleSignIn('redirect');
+        return;
+      } else if (error?.message?.includes('The requested action is invalid') || error?.code === 'auth/invalid-action-code') {
+        errorMsg = languageMode === 'ar'
+          ? 'الإجراء غير صالح: تأكد من تفعيل Google Provider وإضافة نطاق الاستضافة إلى Authorized Domains في Firebase.'
+          : 'Invalid action: ensure Google Provider is enabled and domain is in Authorized Domains in Firebase.';
+      } else if (error?.message) {
+        errorMsg = error.message;
+      }
+      showNotification(errorMsg);
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -328,12 +503,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [darkMode]);
 
-  // Sync RTL direction if Arabic-only
+  // Sync RTL direction and language attribute
   useEffect(() => {
     if (languageMode === 'ar') {
       document.documentElement.setAttribute('dir', 'rtl');
-    } else {
+      document.documentElement.setAttribute('lang', 'ar');
+    } else if (languageMode === 'en') {
       document.documentElement.setAttribute('dir', 'ltr');
+      document.documentElement.setAttribute('lang', 'en');
+    } else {
+      document.documentElement.setAttribute('dir', 'rtl');
+      document.documentElement.setAttribute('lang', 'ar');
     }
   }, [languageMode]);
 
@@ -359,6 +539,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateUserProfile = async (partial: Partial<UserProfile>) => {
     setUserProfile(prev => {
       const updated = { ...prev, ...partial };
+      try {
+        localStorage.setItem('vascular_user_profile', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save profile to localStorage:', e);
+      }
       if (firebaseUser) {
         setDoc(doc(db, 'users', firebaseUser.uid), updated, { merge: true }).catch(err => {
           console.warn('Failed to sync profile update:', err);
@@ -369,8 +554,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addReference = (docItem: ReferenceDocument) => {
-    setReferences(prev => [docItem, ...prev]);
+    setReferences(prev => {
+      const updated = [docItem, ...prev.filter(d => d.id !== docItem.id)];
+      try {
+        const userUploaded = updated.filter(d => d.isUserUploaded);
+        localStorage.setItem('vascular_user_uploaded_books', JSON.stringify(userUploaded));
+      } catch (e) {
+        console.warn('Could not persist uploaded books to localStorage:', e);
+      }
+      return updated;
+    });
     showNotification(`"${docItem.title}" processed and indexed successfully.`);
+  };
+
+  const deleteReference = async (docId: string) => {
+    const docToDelete = references.find(d => d.id === docId);
+    const docTitle = docToDelete?.title || (languageMode === 'ar' ? 'الكتاب المرفوع' : 'Uploaded Book');
+
+    setReferences(prev => {
+      const updated = prev.filter(d => d.id !== docId);
+      try {
+        const userUploaded = updated.filter(d => d.isUserUploaded);
+        localStorage.setItem('vascular_user_uploaded_books', JSON.stringify(userUploaded));
+      } catch (e) {
+        console.warn('Could not persist updated books after deletion:', e);
+      }
+      return updated;
+    });
+
+    if (selectedDocForReader?.id === docId) {
+      setSelectedDocForReader(null);
+    }
+
+    if (firebaseUser) {
+      try {
+        await deleteDoc(doc(db, 'users', firebaseUser.uid, 'uploaded_books', docId));
+      } catch (err) {
+        console.warn('Failed to delete book from Firestore:', err);
+      }
+    }
+
+    showNotification(
+      languageMode === 'ar'
+        ? `تم مسح "${docTitle}" بنجاح.`
+        : `"${docTitle}" removed successfully.`
+    );
   };
 
   const addNote = async (note: StudyNote) => {
@@ -455,9 +683,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const addMultipleFlashcards = (cards: Flashcard[]) => {
+    setFlashcards(prev => {
+      const existingIds = new Set(prev.map(c => c.id));
+      const fresh = cards.filter(c => !existingIds.has(c.id));
+      return [...fresh, ...prev];
+    });
+    showNotification(`Added ${cards.length} flashcards to your deck.`);
+  };
+
   const addMcq = (mcq: MCQQuestion) => {
     setMcqs(prev => [mcq, ...prev]);
     showNotification('New vascular MCQ generated.');
+  };
+
+  const addMultipleMcqs = (questions: MCQQuestion[]) => {
+    setMcqs(prev => {
+      const existingIds = new Set(prev.map(q => q.id));
+      const fresh = questions.filter(q => !existingIds.has(q.id));
+      return [...fresh, ...prev];
+    });
+    showNotification(`Added ${questions.length} board MCQs.`);
   };
 
   return (
@@ -475,6 +721,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUserProfile,
         references,
         addReference,
+        deleteReference,
         selectedDocForReader,
         setSelectedDocForReader,
         notes,
@@ -482,10 +729,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateNote,
         deleteNote,
         flashcards,
+        setFlashcards,
         updateFlashcardStatus,
         addFlashcard,
+        addMultipleFlashcards,
         mcqs,
+        setMcqs,
         addMcq,
+        addMultipleMcqs,
         clinicalCases,
         isCommandPaletteOpen,
         setIsCommandPaletteOpen,
@@ -507,6 +758,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isAuthLoading,
         signInWithGoogle,
         signOutUser,
+        isRegistered,
+        setIsRegistered,
+        isRegistrationModalOpen,
+        setIsRegistrationModalOpen,
+        isBlackBoxAuditOpen,
+        setIsBlackBoxAuditOpen,
       }}
     >
       {children}

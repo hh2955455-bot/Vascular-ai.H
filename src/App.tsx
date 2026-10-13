@@ -8,6 +8,8 @@ import { BooksCatalogModal } from './components/BooksCatalogModal';
 import { ContactDeveloperModal } from './components/ContactDeveloperModal';
 import { PhonePermissionsModal } from './components/PhonePermissionsModal';
 import { PhonePermissionsBanner } from './components/PhonePermissionsBanner';
+import { OfflineStatusBar } from './components/OfflineStatusBar';
+import { RegistrationModal } from './components/RegistrationModal';
 import { DashboardView } from './components/DashboardView';
 import { AiTutorView } from './components/AiTutorView';
 import { SearchView } from './components/SearchView';
@@ -19,6 +21,9 @@ import { ClinicalCaseView } from './components/ClinicalCaseView';
 import { AnatomyView } from './components/AnatomyView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { SettingsView } from './components/SettingsView';
+import { BlackBoxErrorBoundary } from './components/BlackBoxErrorBoundary';
+import { BlackBoxAuditViewerModal } from './components/BlackBoxAuditViewerModal';
+import { blackbox } from './services/blackboxInterceptor';
 
 const MainLayout: React.FC = () => {
   const {
@@ -28,8 +33,28 @@ const MainLayout: React.FC = () => {
     isContactDeveloperOpen,
     setIsContactDeveloperOpen,
     isPhonePermissionsOpen,
-    setIsPhonePermissionsOpen
+    setIsPhonePermissionsOpen,
+    isRegistrationModalOpen,
+    setIsRegistrationModalOpen,
+    isRegistered,
+    userProfile,
+    firebaseUser,
+    isBlackBoxAuditOpen,
+    setIsBlackBoxAuditOpen,
   } = useApp();
+
+  // Initialize Black Box Audit Interceptor on app bootstrap
+  React.useEffect(() => {
+    blackbox.init(firebaseUser?.uid || userProfile.id);
+  }, [firebaseUser?.uid, userProfile.id]);
+
+  // Log navigation transitions to Black Box
+  React.useEffect(() => {
+    blackbox.log('VIEW', `Screen:${activeTab}`, {
+      tab: activeTab,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+  }, [activeTab]);
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -63,6 +88,7 @@ const MainLayout: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-teal-500 selection:text-white transition-colors duration-200">
       <PhonePermissionsBanner onOpenModal={() => setIsPhonePermissionsOpen(true)} />
+      <OfflineStatusBar />
       <Header />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />
@@ -76,14 +102,25 @@ const MainLayout: React.FC = () => {
       <BooksCatalogModal isOpen={isBooksCatalogOpen} onClose={() => setIsBooksCatalogOpen(false)} />
       <ContactDeveloperModal isOpen={isContactDeveloperOpen} onClose={() => setIsContactDeveloperOpen(false)} />
       <PhonePermissionsModal isOpen={isPhonePermissionsOpen} onClose={() => setIsPhonePermissionsOpen(false)} />
+      <RegistrationModal
+        isOpen={isRegistrationModalOpen}
+        onClose={() => setIsRegistrationModalOpen(false)}
+        canDismiss={isRegistered}
+      />
+      <BlackBoxAuditViewerModal
+        isOpen={isBlackBoxAuditOpen}
+        onClose={() => setIsBlackBoxAuditOpen(false)}
+      />
     </div>
   );
 };
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainLayout />
-    </AppProvider>
+    <BlackBoxErrorBoundary>
+      <AppProvider>
+        <MainLayout />
+      </AppProvider>
+    </BlackBoxErrorBoundary>
   );
 }

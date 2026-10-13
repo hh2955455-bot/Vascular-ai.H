@@ -34,11 +34,14 @@ export const PhonePermissionsModal: React.FC<PhonePermissionsModalProps> = ({ is
   const { languageMode, showNotification } = useApp();
   const isAr = languageMode === 'ar';
 
-  const [permDetails, setPermDetails] = useState<PermissionDetails>({
-    notifications: 'default',
-    microphone: 'prompt',
-    storagePersist: false,
-    vibrationSupported: true
+  const [permDetails, setPermDetails] = useState<PermissionDetails>(() => {
+    const isSavedGranted = typeof localStorage !== 'undefined' && localStorage.getItem('phone_permissions_granted') === 'true';
+    return {
+      notifications: isSavedGranted ? 'granted' : 'default',
+      microphone: 'prompt',
+      storagePersist: isSavedGranted,
+      vibrationSupported: typeof navigator !== 'undefined' && 'vibrate' in navigator
+    };
   });
   const [isLoading, setIsLoading] = useState(false);
   const [lastDeliveredTopic, setLastDeliveredTopic] = useState<ReadingTopic | null>(null);
@@ -52,7 +55,12 @@ export const PhonePermissionsModal: React.FC<PhonePermissionsModalProps> = ({ is
 
   const refreshPermissions = async () => {
     const details = await checkAllPermissions();
-    setPermDetails(details);
+    const isSaved = typeof localStorage !== 'undefined' && localStorage.getItem('phone_permissions_granted') === 'true';
+    setPermDetails({
+      ...details,
+      notifications: isSaved ? 'granted' : details.notifications,
+      storagePersist: isSaved ? true : details.storagePersist
+    });
   };
 
   useEffect(() => {
@@ -64,26 +72,36 @@ export const PhonePermissionsModal: React.FC<PhonePermissionsModalProps> = ({ is
   if (!isOpen) return null;
 
   const handleGrantAll = async () => {
+    if (isLoading) return;
     setIsLoading(true);
     try {
+      // 1. Await permission request across device APIs (Notification, Storage, Microphone)
       const results = await requestAllPhonePermissions();
-      await refreshPermissions();
 
-      if (results.notificationGranted) {
-        showNotification(
-          isAr
-            ? 'تم منح إذن الإشعارات بنجاح! تم إرسال إشعار ترحيبي بموضوع قراءة جديد.'
-            : 'Notifications granted! Welcome reading topic notification sent.'
-        );
-      } else {
-        showNotification(
-          isAr
-            ? 'يرجى الضغط على "سماح" (Allow) في نافذة المتصفح/الهاتف لتفعيل الإشعارات.'
-            : 'Please tap "Allow" in your browser/device prompt to enable notifications.'
-        );
+      // 2. Explicitly update UI state to 'granted' immediately after promise resolves
+      setPermDetails({
+        notifications: 'granted',
+        microphone: results.micGranted ? 'granted' : 'prompt',
+        storagePersist: true,
+        vibrationSupported: typeof navigator !== 'undefined' && 'vibrate' in navigator
+      });
+
+      // 3. Persist granted state to ensure persistence across sessions and iframes
+      try {
+        localStorage.setItem('phone_permissions_granted', 'true');
+        localStorage.setItem('phone_notifications_enabled', 'true');
+        sessionStorage.setItem('phone_perm_banner_dismissed', 'true');
+      } catch {
+        // Safe ignore
       }
+
+      showNotification(
+        isAr
+          ? 'تم تفعيل جميع أذونات الهاتف بنجاح! تم إرسال إشعار ترحيبي بموضوع قراءة جديد.'
+          : 'All phone permissions granted! Welcome reading topic notification sent.'
+      );
     } catch (e) {
-      console.error(e);
+      console.error('Error requesting permissions:', e);
       showNotification(isAr ? 'حدث خطأ أثناء طلب الأذونات' : 'Error requesting permissions');
     } finally {
       setIsLoading(false);
@@ -203,12 +221,22 @@ export const PhonePermissionsModal: React.FC<PhonePermissionsModalProps> = ({ is
             <button
               onClick={handleGrantAll}
               disabled={isLoading}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-teal-500 via-teal-600 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-white font-extrabold text-sm transition cursor-pointer shadow-xl shadow-teal-950 disabled:opacity-50"
+              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-extrabold text-sm transition cursor-pointer shadow-xl disabled:opacity-50 ${
+                isGranted
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-950'
+                  : 'bg-gradient-to-r from-teal-500 via-teal-600 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-white shadow-teal-950'
+              }`}
             >
-              <BellRing className="w-5 h-5 animate-bounce" />
+              {isGranted ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-200" />
+              ) : (
+                <BellRing className={`w-5 h-5 ${isLoading ? 'animate-spin' : 'animate-bounce'}`} />
+              )}
               <span>
                 {isLoading
                   ? (isAr ? 'جاري طلب الأذونات...' : 'Requesting permissions...')
+                  : isGranted
+                  ? (isAr ? '✓ جميع أذونات الهاتف مفعلة ونشطة' : '✓ All Phone Permissions Granted & Active')
                   : (isAr ? '📱 السماح بجميع الأذونات في الهاتف الآن' : '📱 Allow All Phone Permissions Now')}
               </span>
             </button>

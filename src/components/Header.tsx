@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import {
   Search,
   ShieldAlert,
+  ShieldCheck,
   Moon,
   Sun,
   Sunrise,
@@ -12,8 +13,13 @@ import {
   Stethoscope,
   BookOpen,
   Cloud,
-  LogIn
+  LogIn,
+  UserPlus,
+  UserCheck,
+  Sparkles,
+  WifiOff
 } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface TimeGreeting {
   ar: string;
@@ -72,8 +78,12 @@ export const Header: React.FC = () => {
     references,
     notification,
     firebaseUser,
+    isAuthLoading,
     signInWithGoogle,
-    signOutUser
+    signOutUser,
+    isRegistered,
+    setIsRegistrationModalOpen,
+    setIsBlackBoxAuditOpen
   } = useApp();
 
   const isAr = languageMode === 'ar';
@@ -164,10 +174,10 @@ export const Header: React.FC = () => {
         >
           <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600 dark:text-teal-400 shrink-0 group-hover:scale-110 transition" />
           <span className="hidden xl:inline text-xs">
-            {isAr ? 'الكتب' : 'Books'}
+            {isAr ? 'الكتب المرفوعة' : 'Uploaded Books'}
           </span>
           <span className="px-1.5 py-0.2 rounded-md bg-teal-500/20 text-[10px] font-mono font-black text-teal-700 dark:text-teal-200 border border-teal-500/30 shrink-0">
-            {references.length}
+            {references.filter(b => b.isUserUploaded).length}
           </span>
         </button>
 
@@ -235,6 +245,20 @@ export const Header: React.FC = () => {
           <span className="hidden 2xl:inline">{isAr ? 'إخلاء المسؤولية' : 'Disclaimer'}</span>
         </button>
 
+        {/* Black Box Audit Trail Button (1-Year Immutable Medical Audit Trail) */}
+        <button
+          onClick={() => setIsBlackBoxAuditOpen(true)}
+          className="flex items-center gap-1.5 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 hover:bg-teal-500/10 dark:hover:bg-teal-500/15 border border-slate-300 dark:border-slate-700/80 hover:border-teal-500/50 text-slate-700 dark:text-teal-300 transition text-xs font-semibold cursor-pointer shrink-0 shadow-xs group"
+          title={isAr ? 'سجل الصندوق الأسود: التدقيق والأمان الطبي المحمي (احتفاظ 1 سنة+)' : 'Black Box: Medical Audit Trail & Flight Recorder (1-Yr Retention)'}
+          aria-label="Black Box Audit Trail"
+        >
+          <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600 dark:text-teal-400 shrink-0 group-hover:scale-110 transition" />
+          <span className="hidden xl:inline text-[11px] font-bold">
+            {isAr ? 'الصندوق الأسود' : 'Black Box'}
+          </span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" title="Append-Only Active"></span>
+        </button>
+
         {/* Dark/Light mode toggle with responsive icons & active state */}
         <button
           onClick={() => setDarkMode(!darkMode)}
@@ -267,8 +291,21 @@ export const Header: React.FC = () => {
           )}
         </button>
 
+        {/* PWA In-App Install Button */}
+        <PWAInstallButton />
+
         {/* Firebase Cloud Sync / Auth Status */}
-        {firebaseUser ? (
+        {isAuthLoading ? (
+          <div
+            className="flex items-center gap-1.5 p-1 sm:px-2.5 sm:py-1 rounded-xl bg-slate-800 border border-teal-500/30 text-teal-300 text-xs shrink-0 shadow-xs"
+            title={isAr ? 'جاري التحقق من جلسة الدخول...' : 'Verifying authentication session...'}
+          >
+            <Cloud className="w-3.5 h-3.5 text-teal-400 animate-pulse shrink-0" />
+            <span className="hidden sm:inline text-[11px] font-bold">
+              {isAr ? 'جاري التحقق...' : 'Syncing...'}
+            </span>
+          </div>
+        ) : firebaseUser ? (
           <button
             onClick={signOutUser}
             className="flex items-center gap-1.5 p-1 sm:px-2 sm:py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition text-xs shrink-0 cursor-pointer"
@@ -282,7 +319,7 @@ export const Header: React.FC = () => {
           </button>
         ) : (
           <button
-            onClick={signInWithGoogle}
+            onClick={() => signInWithGoogle()}
             className="flex items-center gap-1.5 p-1 sm:px-2.5 sm:py-1 rounded-xl bg-teal-500/15 border border-teal-500/40 text-teal-300 hover:bg-teal-500/25 transition text-xs shrink-0 cursor-pointer shadow-xs"
             title={isAr ? 'مزامنة مع سحابة فايربيس (Google Sign-In)' : 'Sync to Firebase Cloud (Google Sign-In)'}
           >
@@ -293,20 +330,40 @@ export const Header: React.FC = () => {
           </button>
         )}
 
-        {/* Profile Avatar Badge */}
-        <div className="flex items-center gap-1.5 pl-1 sm:pl-2 border-l border-slate-800 shrink-0">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-700 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-teal-900/40 shrink-0">
-            <Stethoscope className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </div>
-          <div className="hidden 2xl:block text-left">
-            <p className="text-xs font-semibold text-slate-200 leading-tight">
-              {userProfile.name}
-            </p>
-            <p className="text-[10px] text-teal-400 font-medium leading-none">
-              {userProfile.specialty}
-            </p>
-          </div>
-        </div>
+        {/* Dedicated Doctor Registration / Profile Icon & Button */}
+        {isRegistered ? (
+          <button
+            onClick={() => setIsRegistrationModalOpen(true)}
+            className="flex items-center gap-1.5 pl-1 sm:pl-2 border-l border-slate-200 dark:border-slate-800 shrink-0 hover:opacity-85 transition cursor-pointer group"
+            title={isAr ? `حساب الطبيب المسجل: ${userProfile.name} (${userProfile.specialty}) - انقر لتعديل البيانات` : `Registered Doctor: ${userProfile.name} (${userProfile.specialty}) - Click to edit`}
+          >
+            <div className="relative">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-700 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-teal-900/40 shrink-0 group-hover:scale-105 transition">
+                <Stethoscope className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </div>
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" title="Registered"></span>
+            </div>
+            <div className="hidden xl:block text-left">
+              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-tight truncate max-w-[120px]">
+                {userProfile.name || (isAr ? 'طبيب مسجل' : 'Registered Doctor')}
+              </p>
+              <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium leading-none truncate max-w-[120px]">
+                {userProfile.specialty}
+              </p>
+            </div>
+          </button>
+        ) : (
+          <button
+            onClick={() => setIsRegistrationModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs shrink-0 shadow-md shadow-teal-950/40 transition cursor-pointer animate-pulse"
+            title={isAr ? 'اضغط هنا لتسجيل حسابك بالاسم والجيميل والتخصص (مرة واحدة لكل مستخدم)' : 'Click to register with Name, Gmail, and Specialization (Once per user)'}
+          >
+            <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="text-xs">
+              {isAr ? 'تسجيل الطبيب' : 'Register'}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Floating notification toast if active */}

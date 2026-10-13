@@ -13,7 +13,8 @@ import {
   X,
   Languages,
   Library,
-  Globe
+  Globe,
+  ShieldCheck
 } from 'lucide-react';
 
 export const CommandPalette: React.FC = () => {
@@ -26,7 +27,8 @@ export const CommandPalette: React.FC = () => {
     setLanguageMode,
     languageMode,
     references,
-    setIsBooksCatalogOpen
+    setIsBooksCatalogOpen,
+    setIsBlackBoxAuditOpen
   } = useApp();
 
   const isAr = languageMode === 'ar';
@@ -41,6 +43,17 @@ export const CommandPalette: React.FC = () => {
   };
 
   const commands = [
+    {
+      id: 'cmd-black-box',
+      title: isAr
+        ? 'الصندوق الأسود: فتح سجل التدقيق والأنشطة المحمي (Black Box Audit Trail)'
+        : 'Open Black Box: Tamper-Evident Audit Trail & Timeline',
+      category: 'Security & Forensics',
+      icon: ShieldCheck,
+      action: () => {
+        setIsBlackBoxAuditOpen(true);
+      }
+    },
     {
       id: 'cmd-books-catalog',
       title: isAr

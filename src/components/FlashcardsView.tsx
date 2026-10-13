@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Flashcard } from '../types';
+import { generateDynamicFlashcards } from '../services/aiService';
 import {
   Layers,
   Sparkles,
@@ -14,28 +15,70 @@ import {
   Filter,
   Check,
   X,
-  Plus
+  Plus,
+  Globe,
+  Target,
+  Shuffle
 } from 'lucide-react';
 
 export const FlashcardsView: React.FC = () => {
-  const { flashcards, updateFlashcardStatus, addFlashcard, languageMode, showNotification } = useApp();
+  const {
+    flashcards,
+    updateFlashcardStatus,
+    addFlashcard,
+    addMultipleFlashcards,
+    references,
+    languageMode,
+    showNotification
+  } = useApp();
+
   const isAr = languageMode === 'ar';
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedSource, setSelectedSource] = useState<'all' | 'books' | 'external' | 'studied_part'>('all');
+  const [selectedStudiedTopic, setSelectedStudiedTopic] = useState<string>('');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
 
   // AI Flashcard Generator State
   const [isGeneratorOpen, setIsGeneratorOpen] = useState(false);
   const [genTopic, setGenTopic] = useState('');
+  const [genSource, setGenSource] = useState<'all' | 'books' | 'external' | 'studied_part'>('books');
   const [genDifficulty, setGenDifficulty] = useState<'Basic' | 'Intermediate' | 'Advanced'>('Intermediate');
   const [isGenerating, setIsGenerating] = useState(false);
 
   const categories = ['All', 'Arterial', 'Aorta', 'Carotid', 'Venous', 'Trauma', 'Dialysis'];
 
-  const filteredCards = flashcards.filter(c =>
-    selectedCategory === 'All' ? true : c.category === selectedCategory
-  );
+  const studiedTopicsQuickList = [
+    { id: 'ali', labelEn: 'Acute Limb Ischemia & Fogarty', labelAr: 'إقفار الأطراف الحاد وقسطرة فوجارتي' },
+    { id: 'aaa_evar', labelEn: 'AAA & EVAR Anatomical Criteria', labelAr: 'تمدد الأورطي ومعايير EVAR' },
+    { id: 'carotid', labelEn: 'Carotid Stenosis & CEA Anatomy', labelAr: 'تضيق السباتي وتشريح جراحة CEA' },
+    { id: 'fasciotomy', labelEn: '4-Compartment Leg Fasciotomy', labelAr: 'بضع اللفافة بالحجرات الأربع' },
+    { id: 'tos', labelEn: 'Thoracic Outlet Syndrome & First Rib', labelAr: 'متلازمة مخرج الصدر واستئصال الضلع الأول' },
+    { id: 'dvt', labelEn: 'Deep Vein Thrombosis & May-Thurner', labelAr: 'الخثار الوريدي ومتلازمة ماي-تيرنر' },
+    { id: 'avf', labelEn: 'Dialysis Access Steal & DRIL', labelAr: 'سرقة التروية بالناسور وعملية DRIL' },
+    { id: 'wifi', labelEn: 'Diabetic Foot & WIfI Classification', labelAr: 'القدم السكرية وتصنيف WIfI' },
+  ];
+
+  const filteredCards = flashcards.filter(c => {
+    const matchCategory = selectedCategory === 'All' ? true : c.category === selectedCategory;
+    const matchSource =
+      selectedSource === 'all'
+        ? true
+        : selectedSource === 'books'
+        ? c.sourceOrigin === 'books' || !c.sourceOrigin
+        : selectedSource === 'external'
+        ? c.sourceOrigin === 'external'
+        : c.sourceOrigin === 'studied_part';
+
+    const matchTopic =
+      !selectedStudiedTopic
+        ? true
+        : c.topic.toLowerCase().includes(selectedStudiedTopic.toLowerCase()) ||
+          c.subtopic.toLowerCase().includes(selectedStudiedTopic.toLowerCase());
+
+    return matchCategory && matchSource && matchTopic;
+  });
 
   const currentCard: Flashcard | undefined = filteredCards[currentIndex];
 
@@ -53,7 +96,7 @@ export const FlashcardsView: React.FC = () => {
     if (currentIndex > 0) {
       setCurrentIndex(prev => prev - 1);
     } else {
-      setCurrentIndex(filteredCards.length - 1);
+      setCurrentIndex(Math.max(0, filteredCards.length - 1));
     }
   };
 
@@ -61,12 +104,41 @@ export const FlashcardsView: React.FC = () => {
     if (!currentCard) return;
     if (action === 'know') {
       updateFlashcardStatus(currentCard.id, 'mastered');
-      showNotification('Marked as Known! Spaced repetition interval updated.');
+      showNotification(isAr ? 'تم تحديدها كـ "متقنة"! تم تحديث فترة التكرار.' : 'Marked as Known! Spaced repetition updated.');
     } else {
       updateFlashcardStatus(currentCard.id, 'learning');
-      showNotification('Marked for Review Again soon.');
+      showNotification(isAr ? 'تم تحديدها للمراجعة القريبة.' : 'Marked for Review Again soon.');
     }
     handleNext();
+  };
+
+  const handleGenerateDeckForStudiedTopic = async (topicTitle: string, source: 'all' | 'books' | 'external' | 'studied_part' = 'studied_part') => {
+    setIsGenerating(true);
+    try {
+      const newCards = await generateDynamicFlashcards({
+        source,
+        topicOrPart: topicTitle,
+        count: 4,
+        references,
+        languageMode,
+      });
+
+      if (newCards.length > 0) {
+        addMultipleFlashcards(newCards);
+        setSelectedStudiedTopic(topicTitle);
+        setCurrentIndex(0);
+        showNotification(
+          isAr
+            ? `تم توليد وإضافة ${newCards.length} بطاقات استذكار للجزء: "${topicTitle}"`
+            : `Generated & added ${newCards.length} flashcards for "${topicTitle}"!`
+        );
+      }
+    } catch (err) {
+      console.warn('Failed to generate cards for topic:', err);
+      showNotification(isAr ? 'حدث خطأ أثناء التوليد.' : 'Generation failed.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleGenerateAiFlashcard = async () => {
@@ -74,30 +146,25 @@ export const FlashcardsView: React.FC = () => {
     setIsGenerating(true);
 
     try {
-      const newCard: Flashcard = {
-        id: 'fc-ai-' + Date.now(),
-        topic: genTopic,
-        subtopic: 'Board & Clinical Pearls',
-        category: genTopic.toLowerCase().includes('vein') || genTopic.toLowerCase().includes('dvt') ? 'Venous'
-          : genTopic.toLowerCase().includes('aorta') || genTopic.toLowerCase().includes('aaa') ? 'Aorta'
-          : genTopic.toLowerCase().includes('carotid') ? 'Carotid'
-          : genTopic.toLowerCase().includes('trauma') ? 'Trauma'
-          : genTopic.toLowerCase().includes('dialysis') ? 'Dialysis'
-          : 'Arterial',
-        difficulty: genDifficulty,
-        frontEn: `What are the critical diagnostic criteria, anatomical landmarks, and management steps for ${genTopic}?`,
-        frontAr: `ما هي المعايير التشخيصية والعلامات التشريحية وتدبير ${genTopic}؟`,
-        backEn: `Key Surgical Considerations for ${genTopic}:\n• Primary diagnosis confirmed by hemodynamic duplex & cross-sectional CTA.\n• First-line stabilization involves heparinization and immediate surgical planning.\n• Landmarks at risk must be preserved with meticulous dissection.\n• Surveillance protocol dictates periodic non-invasive evaluation.`,
-        backAr: `النقاط الجراحية الأساسية لـ ${genTopic}:\n• تأكيد التشخيص بالدوبلر والأشعة المقطعية.\n• التثبيت الأولي بالهيبارين والتخطيط الجراحي.\n• حماية الأعضاء والأعصاب المجاورة أثناء التعريض الجراحي.`,
-        referenceCitation: "Rutherford's Vascular Surgery 10th Ed. & ESVS Guidelines",
-        status: 'learning',
-        reviewCount: 0
-      };
+      const generated = await generateDynamicFlashcards({
+        source: genSource,
+        topicOrPart: genTopic.trim(),
+        count: 4,
+        references,
+        languageMode,
+      });
 
-      addFlashcard(newCard);
-      setIsGeneratorOpen(false);
-      setGenTopic('');
-      showNotification(`Added new flashcard for "${genTopic}"`);
+      if (generated.length > 0) {
+        addMultipleFlashcards(generated);
+        setIsGeneratorOpen(false);
+        setGenTopic('');
+        setCurrentIndex(0);
+        showNotification(
+          isAr
+            ? `تمت إضافة ${generated.length} بطاقة استذكار جديدة بنجاح!`
+            : `Added ${generated.length} new flashcards successfully!`
+        );
+      }
     } catch (e) {
       showNotification('Generation failed. Try again.');
     } finally {
@@ -115,15 +182,15 @@ export const FlashcardsView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-teal-400 text-xs font-semibold mb-1">
             <BrainCircuit className="w-4 h-4" />
-            <span>{isAr ? 'نظام التكرار المتباعد الذكي' : 'Spaced Repetition System (SRS)'}</span>
+            <span>{isAr ? 'نظام التكرار المتباعد وفلاش كاردس الأوعية الدموية' : 'Vascular Spaced Repetition Flashcards'}</span>
           </div>
           <h2 className="text-2xl font-extrabold text-white">
             {isAr ? 'البطاقات التعليمية لجراحة الأوعية' : 'Vascular Flashcards Workspace'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-400">
             {isAr
-              ? 'احفظ المفاهيم الجراحية فائقة الأهمية والمعايير الرقمية عبر بطاقات تفاعلية تدعم العربية والإنجليزية.'
-              : 'Review high-yield anatomical relations, classifications, drug dosages, and surgical pearls.'}
+              ? 'توليد ومراجعة البطاقات من كتب ومراجع التطبيق، ومن خارجها (لآلئ البورد)، ومن أي جزء محدد يتم دراسته.'
+              : 'Study and generate flashcards from uploaded textbooks & ESVS guidelines, external board pearls, or any specified studied section.'}
           </p>
         </div>
 
@@ -142,11 +209,115 @@ export const FlashcardsView: React.FC = () => {
 
           <button
             onClick={() => setIsGeneratorOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs sm:text-sm transition shadow-lg shadow-teal-950 cursor-pointer shrink-0"
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-teal-600 to-purple-600 hover:from-teal-500 hover:to-purple-500 text-white font-bold text-xs sm:text-sm transition shadow-lg shadow-teal-950 cursor-pointer shrink-0"
           >
             <Sparkles className="w-4 h-4" />
-            <span>{isAr ? 'توليد بطاقات' : 'Generate Cards'}</span>
+            <span>{isAr ? 'توليد بطاقات جديدة' : 'Generate Cards'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Source Selection & Studied Topic Chips Bar */}
+      <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-slate-400 font-semibold mr-1 flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5 text-teal-400" />
+              <span>{isAr ? 'مصدر البطاقات:' : 'Source:'}</span>
+            </span>
+
+            <button
+              onClick={() => {
+                setSelectedSource('all');
+                setCurrentIndex(0);
+              }}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer ${
+                selectedSource === 'all'
+                  ? 'bg-teal-600 text-white'
+                  : 'bg-slate-800 text-slate-400 hover:text-white'
+              }`}
+            >
+              {isAr ? 'الكل 🌟' : 'All Sources 🌟'}
+            </button>
+
+            <button
+              onClick={() => {
+                setSelectedSource('books');
+                setCurrentIndex(0);
+              }}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer flex items-center gap-1 ${
+                selectedSource === 'books'
+                  ? 'bg-teal-600 text-white'
+                  : 'bg-slate-800 text-slate-400 hover:text-white'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>{isAr ? 'من كتب ومراجع التطبيق' : 'Uploaded Books & ESVS'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setSelectedSource('external');
+                setCurrentIndex(0);
+              }}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer flex items-center gap-1 ${
+                selectedSource === 'external'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-slate-800 text-slate-400 hover:text-white'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{isAr ? 'من خارج الكتب (بورد عالمي)' : 'Global Board Pearls'}</span>
+            </button>
+          </div>
+
+          {selectedStudiedTopic && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-teal-300 font-medium">
+                {isAr ? `تصفية بالجزء: "${selectedStudiedTopic}"` : `Filtered by: "${selectedStudiedTopic}"`}
+              </span>
+              <button
+                onClick={() => setSelectedStudiedTopic('')}
+                className="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+                title="Clear topic filter"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Quick studied topics quick-jump & generator row */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span className="font-semibold flex items-center gap-1">
+              <Target className="w-3.5 h-3.5 text-teal-400" />
+              <span>{isAr ? 'توليد واستعراض بطاقات لجزء محدد تم دراسته:' : 'Quick Select Studied Topic:'}</span>
+            </span>
+            {isGenerating && (
+              <span className="text-teal-400 animate-pulse text-[11px] font-mono">
+                {isAr ? 'جاري توليد بطاقات الجزء...' : 'Generating cards...'}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            {studiedTopicsQuickList.map(tp => (
+              <button
+                key={tp.id}
+                onClick={() => handleGenerateDeckForStudiedTopic(isAr ? tp.labelAr : tp.labelEn)}
+                disabled={isGenerating}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer border flex items-center gap-1 ${
+                  selectedStudiedTopic === (isAr ? tp.labelAr : tp.labelEn)
+                    ? 'bg-teal-500/20 text-teal-300 border-teal-500/50'
+                    : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border-slate-750'
+                }`}
+              >
+                <span>🎯</span>
+                <span>{isAr ? tp.labelAr : tp.labelEn}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -179,9 +350,18 @@ export const FlashcardsView: React.FC = () => {
             <span className="font-mono">
               Card {currentIndex + 1} of {filteredCards.length}
             </span>
-            <span className="text-teal-400 font-medium">
-              Category: {currentCard.category} • Difficulty: {currentCard.difficulty}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                {currentCard.sourceOrigin === 'books'
+                  ? (isAr ? 'من مراجع التطبيق' : 'Book Reference')
+                  : currentCard.sourceOrigin === 'external'
+                  ? (isAr ? 'لؤلؤة بورد عالمي' : 'Global Board')
+                  : (isAr ? 'جزء مدروس' : 'Studied Part')}
+              </span>
+              <span className="text-teal-400 font-medium">
+                {currentCard.category} • {currentCard.difficulty}
+              </span>
+            </div>
           </div>
 
           <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
@@ -191,117 +371,116 @@ export const FlashcardsView: React.FC = () => {
             />
           </div>
 
-          {/* Interactive Flip Card (Min-height 320px) */}
+          {/* Interactive Flip Card (Min-height 340px) */}
           <div
             onClick={() => setIsFlipped(!isFlipped)}
             className="cursor-pointer select-none perspective-1000 min-h-[340px] rounded-3xl bg-slate-900 border border-slate-800 hover:border-teal-500/50 transition-all p-6 sm:p-10 flex flex-col justify-between shadow-2xl relative group"
           >
             {/* Top metadata pill */}
             <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-3">
-              <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-teal-400 font-mono text-[11px] font-bold">
+              <span className="font-mono text-teal-400 font-bold uppercase tracking-wider">
                 {currentCard.topic} • {currentCard.subtopic}
               </span>
-              <span className="text-slate-500 text-[11px] flex items-center gap-1 group-hover:text-teal-400 transition">
+              <span className="text-[11px] text-slate-400 flex items-center gap-1 group-hover:text-teal-300 transition">
                 <RotateCw className="w-3.5 h-3.5" />
-                <span>{isFlipped ? 'Click to view Prompt (Front)' : 'Click to Reveal Answer (Back)'}</span>
+                <span>{isAr ? 'اضغط للقلب' : 'Click to flip'}</span>
               </span>
             </div>
 
-            {/* Central Content */}
-            <div className="py-6 sm:py-8 flex flex-col items-center justify-center text-center space-y-4">
+            {/* Central Card Text: Front vs Back */}
+            <div className="py-6 text-center sm:text-left flex-1 flex flex-col justify-center">
               {!isFlipped ? (
-                /* Front Side (Question) */
-                <div className="space-y-4 max-w-xl">
-                  <div className="w-12 h-12 rounded-2xl bg-teal-500/10 text-teal-400 flex items-center justify-center mx-auto mb-2">
-                    <HelpCircle className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-lg sm:text-2xl font-extrabold text-white leading-snug">
-                    {currentCard.frontEn}
+                <div className="space-y-3">
+                  <span className="inline-block text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-800 px-3 py-1 rounded-full">
+                    {isAr ? 'السؤال السريري' : 'Clinical Question'}
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-bold text-white leading-relaxed">
+                    {isAr && currentCard.frontAr ? currentCard.frontAr : currentCard.frontEn}
                   </h3>
-                  {currentCard.frontAr && (
-                    <p className="text-sm sm:text-base text-slate-300 leading-relaxed font-sans" dir="rtl">
-                      {currentCard.frontAr}
-                    </p>
-                  )}
                 </div>
               ) : (
-                /* Back Side (Answer & High Yield Pearls) */
-                <div className="space-y-4 max-w-2xl text-left w-full">
-                  <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
-                    <CheckCircle className="w-4 h-4" />
-                    <span>Clinical Answer & Reasoning:</span>
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  <span className="inline-block text-xs font-bold text-teal-400 uppercase tracking-widest bg-teal-950/60 border border-teal-800/40 px-3 py-1 rounded-full">
+                    {isAr ? 'الإجابة واللؤلؤة الجراحية' : 'Answer & Surgical Pearls'}
+                  </span>
+                  <div className="text-sm sm:text-base text-slate-100 leading-relaxed font-sans whitespace-pre-wrap text-left" dir="ltr">
+                    {isAr && currentCard.backAr ? currentCard.backAr : currentCard.backEn}
                   </div>
-                  <div className="whitespace-pre-wrap text-sm sm:text-base text-slate-200 leading-relaxed bg-slate-850 p-5 rounded-2xl border border-slate-750 font-sans">
-                    {currentCard.backEn}
-                  </div>
-                  {currentCard.backAr && (
-                    <div className="whitespace-pre-wrap text-xs sm:text-sm text-slate-300 leading-relaxed bg-slate-850 p-4 rounded-2xl border border-slate-750" dir="rtl">
-                      {currentCard.backAr}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
 
             {/* Footer Citation */}
-            <div className="flex items-center justify-between text-xs text-slate-500 pt-3 border-t border-slate-800/80">
-              <span className="flex items-center gap-1.5 text-slate-400 font-mono text-[11px]">
-                <BookOpen className="w-3.5 h-3.5 text-teal-400" />
-                <span>{currentCard.referenceCitation}</span>
+            <div className="flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-800/80 pt-3">
+              <span className="flex items-center gap-1 truncate max-w-sm">
+                <BookOpen className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                <span className="truncate">{currentCard.referenceCitation}</span>
               </span>
-              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                currentCard.status === 'mastered'
-                  ? 'bg-emerald-500/10 text-emerald-400'
-                  : 'bg-amber-500/10 text-amber-400'
-              }`}>
-                {currentCard.status}
+              <span className="font-mono text-slate-400">
+                Reviews: {currentCard.reviewCount}
               </span>
             </div>
           </div>
 
-          {/* Action Decision Controls (PRD: [Know] vs [Review Again]) */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
-            <div className="flex items-center gap-2">
+          {/* Action Review Buttons */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <button
                 onClick={handlePrev}
-                className="p-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition cursor-pointer"
-                title="Previous Card"
+                className="flex-1 sm:flex-none px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-750 text-slate-300 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <ArrowLeft className="w-4 h-4" />
+                <span>Previous</span>
               </button>
+
               <button
                 onClick={handleNext}
-                className="p-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition cursor-pointer"
-                title="Next Card"
+                className="flex-1 sm:flex-none px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-750 text-slate-300 font-semibold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
               >
+                <span>Next</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex items-center gap-3 w-full sm:w-auto">
+            {/* Spaced repetition review ratings */}
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <button
                 onClick={() => handleReviewAction('review')}
-                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-xs sm:text-sm transition cursor-pointer shadow-md"
+                className="flex-1 sm:flex-none px-5 py-2.5 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
               >
-                <RotateCw className="w-4 h-4" />
-                <span>{isAr ? 'مراجعة مرة أخرى' : 'Review Again'}</span>
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>{isAr ? 'تحتاج مراجعة ثانية' : 'Review Again'}</span>
               </button>
 
               <button
                 onClick={() => handleReviewAction('know')}
-                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm transition cursor-pointer shadow-lg shadow-emerald-950"
+                className="flex-1 sm:flex-none px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950"
               >
-                <Check className="w-4 h-4" />
-                <span>{isAr ? 'أعرف هذه المعلومة' : 'Know & Master'}</span>
+                <Check className="w-3.5 h-3.5" />
+                <span>{isAr ? 'أعرفها تماماً ✓' : 'Know It ✓'}</span>
               </button>
             </div>
           </div>
         </div>
       ) : (
-        <div className="p-16 text-center rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+        <div className="p-16 text-center rounded-3xl bg-slate-900 border border-slate-800 space-y-4">
           <Layers className="w-12 h-12 text-slate-600 mx-auto" />
-          <h3 className="text-base font-bold text-white">No flashcards in this category</h3>
-          <p className="text-xs text-slate-400">Click "Generate Cards" to create flashcards on any vascular topic.</p>
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-white">
+              {isAr ? 'لا توجد بطاقات في هذا التصنيف حالياً' : 'No flashcards in this filter'}
+            </h3>
+            <p className="text-xs text-slate-400">
+              {isAr
+                ? 'اضغط على أحد الأجزاء المدروسة بالأعلى لتوليد بطاقات لها فوراً، أو انقر "توليد بطاقات جديدة".'
+                : 'Click any studied topic chip above or use "Generate Cards" to create cards on any topic.'}
+            </p>
+          </div>
+          <button
+            onClick={() => handleGenerateDeckForStudiedTopic('Acute Limb Ischemia & Fogarty')}
+            className="px-5 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs transition cursor-pointer"
+          >
+            {isAr ? 'توليد بطاقات سريعة الآن 🎯' : 'Generate Quick Deck'}
+          </button>
         </div>
       )}
 
@@ -312,7 +491,9 @@ export const FlashcardsView: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-teal-400">
                 <Sparkles className="w-5 h-5" />
-                <h3 className="text-base font-bold text-white">Generate Flashcard Deck</h3>
+                <h3 className="text-base font-bold text-white">
+                  {isAr ? 'توليد حزمة فلاش كاردس ذكية' : 'Generate Flashcard Deck'}
+                </h3>
               </div>
               <button
                 onClick={() => setIsGeneratorOpen(false)}
@@ -324,11 +505,37 @@ export const FlashcardsView: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Topic or Clinical Scenario:
+                {isAr ? 'المصدر المطلوب للبطاقات:' : 'Source Material:'}
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'books' as const, label: isAr ? 'من الكتب' : 'Books' },
+                  { id: 'external' as const, label: isAr ? 'بورد خارجي' : 'Board' },
+                  { id: 'studied_part' as const, label: isAr ? 'جزء مدروس' : 'Topic' },
+                ].map(src => (
+                  <button
+                    key={src.id}
+                    type="button"
+                    onClick={() => setGenSource(src.id)}
+                    className={`py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                      genSource === src.id
+                        ? 'bg-teal-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {src.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                {isAr ? 'الجزء أو الموضوع السريري المراد توليد بطاقات له:' : 'Studied Part or Clinical Topic:'}
               </label>
               <input
                 type="text"
-                placeholder="e.g., Fogarty balloon sizing, CEAP classification, Popliteal entrapment..."
+                placeholder={isAr ? 'مثال: بضع اللفافة، أورام السباتي، تمدد الأورطي، DRIL...' : 'e.g., Fogarty balloon sizing, CEAP classification, Popliteal entrapment...'}
                 value={genTopic}
                 onChange={e => setGenTopic(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm text-slate-100 focus:outline-hidden focus:border-teal-500"
@@ -338,12 +545,13 @@ export const FlashcardsView: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Difficulty Level:
+                {isAr ? 'مستوى الصعوبة:' : 'Difficulty Level:'}
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {(['Basic', 'Intermediate', 'Advanced'] as const).map(diff => (
                   <button
                     key={diff}
+                    type="button"
                     onClick={() => setGenDifficulty(diff)}
                     className={`py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
                       genDifficulty === diff
@@ -373,7 +581,7 @@ export const FlashcardsView: React.FC = () => {
                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                 }`}
               >
-                {isGenerating ? 'Generating...' : 'Add Flashcard'}
+                {isGenerating ? (isAr ? 'جاري التوليد...' : 'Generating...') : (isAr ? 'توليد وإضافة البطاقات' : 'Generate Cards')}
               </button>
             </div>
           </div>

@@ -123,6 +123,22 @@ service cloud.firestore {
           allow delete: if isOwner(userId) && isValidId(chunkId);
         }
       }
+
+      // Black Box Audit Trail (Strictly Append-Only & Immutable)
+      match /audit_logs/{logId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(logId);
+        allow update: if false; // STRICT IMMUTABILITY
+        allow delete: if false; // APPEND-ONLY: Cannot be deleted
+      }
+    }
+
+    // Global Audit Logs (Append-Only)
+    match /global_audit_logs/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(logId);
+      allow update: if false; // STRICT IMMUTABILITY
+      allow delete: if false; // APPEND-ONLY
     }
 
     // Connection testing doc

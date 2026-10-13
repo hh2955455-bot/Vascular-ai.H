@@ -5,6 +5,9 @@ import {
   Settings,
   User,
   Shield,
+  ShieldCheck,
+  Lock,
+  Activity,
   Database,
   Languages,
   Check,
@@ -31,7 +34,8 @@ export const SettingsView: React.FC = () => {
     references,
     notes,
     flashcards,
-    showNotification
+    showNotification,
+    setIsBlackBoxAuditOpen
   } = useApp();
 
   const isAr = languageMode === 'ar';
@@ -263,6 +267,92 @@ export const SettingsView: React.FC = () => {
             <Mail className="w-3.5 h-3.5" />
             <span>{isAr ? 'فتح نافذة التواصل مع المبرمج' : 'Open Contact Dialog'}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Black Box Audit Trail & Long-Term Retention System (HIPAA & Medical Regulatory Compliant) */}
+      <div className="rounded-3xl bg-slate-900 border border-teal-500/30 p-6 space-y-5 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-teal-500/20 text-teal-400">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">
+                  {isAr ? 'الصندوق الأسود: سجل التدقيق والأمان الطبي (Black Box Audit)' : 'Black Box Audit Trail & Medical Forensics'}
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold">
+                  Immutable (Append-Only)
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                {isAr
+                  ? 'سجل غير قابل للتعديل أو الحذف، مشفر بسلسلة SHA-256 ومحمي بسياسة احتفاظ لمدة سنة كاملة على الأقل (365+ يوماً).'
+                  : 'Tamper-evident, cryptographically chained activity ledger with guaranteed 1-Year minimum retention policy.'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsBlackBoxAuditOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs transition cursor-pointer shadow-lg shadow-teal-950 shrink-0 self-start sm:self-auto"
+          >
+            <Activity className="w-4 h-4" />
+            <span>{isAr ? 'فتح عارض سجل التدقيق (Timeline)' : 'Open Audit Timeline Viewer'}</span>
+          </button>
+        </div>
+
+        {/* 4 Pillars of Black Box Compliance */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          <div className="p-3.5 rounded-2xl bg-slate-850 border border-slate-750 space-y-1">
+            <span className="text-slate-400 block text-[11px]">Storage Engine:</span>
+            <span className="font-bold text-white flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-teal-400" />
+              <span>Append-Only (WORM)</span>
+            </span>
+            <span className="text-[10px] text-slate-500 block">No DELETE/UPDATE permitted</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-850 border border-slate-750 space-y-1">
+            <span className="text-slate-400 block text-[11px]">Retention Policy:</span>
+            <span className="font-bold text-teal-400 flex items-center gap-1.5">
+              <Check className="w-3.5 h-3.5 text-teal-400" />
+              <span>&ge; 365 Days (1 Year+)</span>
+            </span>
+            <span className="text-[10px] text-slate-500 block">Monthly Partitioning (.jsonl)</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-850 border border-slate-750 space-y-1">
+            <span className="text-slate-400 block text-[11px]">Tamper Evidence:</span>
+            <span className="font-bold text-indigo-300 flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-indigo-400" />
+              <span>SHA-256 Chained Hash</span>
+            </span>
+            <span className="text-[10px] text-slate-500 block">Blockchain-like Merkle-link</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-850 border border-slate-750 space-y-1">
+            <span className="text-slate-400 block text-[11px]">Crash Forensics:</span>
+            <span className="font-bold text-amber-300 flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-amber-400" />
+              <span>Flight Recorder (30 actions)</span>
+            </span>
+            <span className="text-[10px] text-slate-500 block">Captures breadcrumbs on crash</span>
+          </div>
+        </div>
+
+        {/* Regulatory Badges */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-400">
+          <span className="font-semibold text-slate-300">Auditing Standards:</span>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-teal-300 font-mono text-[10px]">
+            HIPAA § 164.312(b)
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-teal-300 font-mono text-[10px]">
+            GDPR Article 32
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-teal-300 font-mono text-[10px]">
+            ESVS Clinical Governance
+          </span>
         </div>
       </div>
 

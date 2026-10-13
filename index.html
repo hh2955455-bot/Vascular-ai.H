@@ -8,22 +8,117 @@
     <meta property="og:title" content="Vascular AI Study Assistant" />
     <meta property="og:description" content="Bilingual AI-powered vascular surgery & vascular medicine study workspace, RAG reference library, interactive anatomy explorer, clinical cases, MCQs, and flashcards." />
     <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="VascularAI" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
-      // Suppress Vite HMR / preview proxy WebSocket disconnections and console errors
+      // 1. Vite HMR Mock WebSocket: Since HMR is disabled in preview, provide a silent open WebSocket for @vite/client
       (function() {
+        if (typeof window !== 'undefined' && window.WebSocket) {
+          const NativeWebSocket = window.WebSocket;
+          function ViteMockWebSocket(url, protocols) {
+            const isViteHmr =
+              protocols === 'vite-hmr' ||
+              (typeof protocols === 'string' && protocols.includes('vite-hmr')) ||
+              (Array.isArray(protocols) && protocols.includes('vite-hmr')) ||
+              (typeof url === 'string' && (url.includes('token=') || url.includes('/@vite/client')));
+
+            if (isViteHmr) {
+              const listeners = {};
+              const dummySocket = {
+                readyState: 1, // WebSocket.OPEN
+                CONNECTING: 0,
+                OPEN: 1,
+                CLOSING: 2,
+                CLOSED: 3,
+                url: String(url),
+                protocol: 'vite-hmr',
+                extensions: '',
+                bufferedAmount: 0,
+                binaryType: 'blob',
+                send: function() {},
+                close: function() {},
+                addEventListener: function(type, listener) {
+                  listeners[type] = listeners[type] || [];
+                  listeners[type].push(listener);
+                  if (type === 'open') {
+                    setTimeout(function() {
+                      try { listener({ type: 'open' }); } catch (_) {}
+                    }, 0);
+                  }
+                },
+                removeEventListener: function(type, listener) {
+                  if (listeners[type]) {
+                    listeners[type] = listeners[type].filter(function(l) { return l !== listener; });
+                  }
+                },
+                dispatchEvent: function() { return true; }
+              };
+              return dummySocket;
+            }
+            return new NativeWebSocket(url, protocols);
+          }
+          ViteMockWebSocket.prototype = NativeWebSocket.prototype;
+          ViteMockWebSocket.CONNECTING = 0;
+          ViteMockWebSocket.OPEN = 1;
+          ViteMockWebSocket.CLOSING = 2;
+          ViteMockWebSocket.CLOSED = 3;
+          window.WebSocket = ViteMockWebSocket;
+        }
+
+        // 2. Intercept console.error to filter out Vite WebSocket disconnections and popup-closed notices
+        const origConsoleError = console.error;
+        console.error = function(...args) {
+          const text = args.map(function(a) {
+            return a instanceof Error ? (a.stack || a.message) : String(a);
+          }).join(' ');
+          if (
+            text.includes('WebSocket closed without opened') ||
+            (text.includes('WebSocket') && text.includes('vite')) ||
+            text.includes('popup-closed-by-user') ||
+            text.includes('auth/popup-closed-by-user')
+          ) {
+            return;
+          }
+          origConsoleError.apply(console, args);
+        };
+
+        const origConsoleWarn = console.warn;
+        console.warn = function(...args) {
+          const text = args.map(function(a) { return String(a); }).join(' ');
+          if (text.includes('WebSocket') && text.includes('vite')) {
+            return;
+          }
+          origConsoleWarn.apply(console, args);
+        };
+
         window.addEventListener('error', function(e) {
-          if (e && (e.message?.includes?.('WebSocket') || String(e.error)?.includes?.('WebSocket') || e.filename?.includes?.('@vite/client'))) {
+          const msg = String(e?.message || e?.error?.message || e?.error || '');
+          if (
+            msg.includes('WebSocket') ||
+            msg.includes('popup-closed-by-user') ||
+            e?.filename?.includes?.('@vite/client')
+          ) {
             e.stopImmediatePropagation();
             e.preventDefault();
             return true;
           }
         }, true);
+
         window.addEventListener('unhandledrejection', function(e) {
-          if (e && (String(e.reason)?.includes?.('WebSocket') || e.reason?.message?.includes?.('WebSocket'))) {
+          const reasonStr = String(e?.reason?.message || e?.reason?.code || e?.reason || '');
+          if (
+            reasonStr.includes('WebSocket') ||
+            reasonStr.includes('popup-closed-by-user')
+          ) {
             e.stopImmediatePropagation();
             e.preventDefault();
             return true;

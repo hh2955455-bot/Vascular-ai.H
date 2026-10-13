@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { SearchResultItem, ReferenceDocument } from '../types';
-import { searchMedicalWeb, WebSearchResult } from '../services/aiService';
 import { searchInsideBooks, normalizeSearchText, escapeRegExp, BookSearchResult } from '../services/bookSearchService';
 import {
   Search,
@@ -62,40 +61,13 @@ export const SearchView: React.FC = () => {
   const topInputRef = useRef<HTMLInputElement>(null);
   const bottomInputRef = useRef<HTMLInputElement>(null);
 
-  // Live Web Search State
-  const [webEvidence, setWebEvidence] = useState<WebSearchResult | null>(null);
-  const [isSearchingWeb, setIsSearchingWeb] = useState(false);
-  const [includeWebSearch, setIncludeWebSearch] = useState(true);
-
-  // Trigger web search when query changes (with debounce)
+  // Sync initial query
   useEffect(() => {
     if (searchInitialQuery) {
       setQuery(searchInitialQuery);
       setSearchInitialQuery(null);
     }
   }, [searchInitialQuery]);
-
-  useEffect(() => {
-    const trimmed = query.trim();
-    if (!trimmed || trimmed.length < 3 || !includeWebSearch) {
-      if (!trimmed || !includeWebSearch) setWebEvidence(null);
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setIsSearchingWeb(true);
-      try {
-        const result = await searchMedicalWeb(trimmed, languageMode);
-        setWebEvidence(result);
-      } catch (err) {
-        console.warn('Web search error:', err);
-      } finally {
-        setIsSearchingWeb(false);
-      }
-    }, 750);
-
-    return () => clearTimeout(timer);
-  }, [query, includeWebSearch, languageMode]);
 
   // Safe Highlight Helper for Search Matches
   const renderHighlighted = (text: string, queryStr: string) => {
@@ -239,7 +211,6 @@ export const SearchView: React.FC = () => {
 
   const filterTabs = [
     'All',
-    'Web Evidence',
     'Books & Guidelines',
     'Notes',
     'Flashcards',
@@ -344,19 +315,19 @@ export const SearchView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-teal-400 text-xs font-semibold mb-1">
             <Search className="w-4 h-4" />
-            <span>{isAr ? 'البحث الشامل في كل الكتب والإنترنت الحي' : 'Universal RAG Search: All Books & Live Medical Web'}</span>
+            <span>{isAr ? 'البحث الدقيق في الكتب والمراجع المرفوعة' : 'Search Inside Uploaded Books & Clinical Guidelines'}</span>
           </div>
           <h2 className="text-2xl font-extrabold text-white">
             {isComparing
               ? isAr ? 'أداة مقارنة المراجع والإرشادات الطبية' : 'Reference & Guideline Comparison Matrix'
-              : isAr ? 'البحث في كل الكتب والإنترنت' : 'Global Books & Live Web Search'}
+              : isAr ? 'البحث في الكتب المرفوعة' : 'Search Uploaded Books & Guidelines'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-400">
             {isComparing
               ? 'Compare authoritative sources side-by-side (Rutherford vs ESVS) to identify points of clinical agreement and controversy.'
               : isAr
-              ? `يبحث التطبيق تلقائياً في جميع الكتب المرفوعة (${references.length} كتب ومراجع) ويبحث أيضاً في شبكة الإنترنت والأبحاث الحديثة مباشرة.`
-              : `Searches simultaneously across all ${references.length} uploaded books & guidelines AND queries the live medical web for latest evidence.`}
+              ? `يبحث التطبيق حصرياً داخل الكتب والملفات المرفوعة (${references.length} كتب ومراجع). للبحث في مصادر الإنترنت الموثقة، يرجى استخدام Ask AI فهو المكان الوحيد المخصص لذلك.`
+              : `Searches strictly inside uploaded books & guidelines (${references.length} books). For external online medical research, consult Ask AI (the exclusive internet gateway).`}
           </p>
         </div>
 
@@ -414,8 +385,8 @@ export const SearchView: React.FC = () => {
                   type="text"
                   placeholder={
                     isAr
-                      ? 'ابحث في كل الكتب والإنترنت (مثل: Rutherford classification, EVAR, Fasciotomy)...'
-                      : 'Search across all books & live medical web (e.g., SFA occlusion, Rutherford classification)...'
+                      ? 'ابحث داخل الكتب والمراجع المرفوعة فقط (مثل: Rutherford classification, EVAR, Fasciotomy)...'
+                      : 'Search across uploaded books & guidelines (e.g., SFA occlusion, Rutherford classification)...'
                   }
                   value={query}
                   onChange={e => {
@@ -452,16 +423,15 @@ export const SearchView: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => setIncludeWebSearch(!includeWebSearch)}
-                    className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-                      includeWebSearch
-                        ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40'
-                        : 'bg-slate-800 text-slate-500 border border-slate-700'
-                    }`}
-                    title="Toggle Live Web Grounding Search"
+                    onClick={() => {
+                      setTutorInitialPrompt(query);
+                      setActiveTab('tutor');
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer bg-slate-800 text-sky-400 hover:text-white border border-slate-700 hover:border-sky-500/40"
+                    title={isAr ? 'الانتقال إلى Ask AI للبحث في الإنترنت الموثق' : 'Ask AI Web Search'}
                   >
-                    <Globe className={`w-3.5 h-3.5 ${includeWebSearch ? 'text-teal-400 animate-spin-slow' : 'text-slate-500'}`} />
-                    <span className="hidden sm:inline">{includeWebSearch ? (isAr ? 'الويب مفعل' : '+ Web Active') : '+ Web Off'}</span>
+                    <Globe className="w-3.5 h-3.5 text-sky-400" />
+                    <span className="hidden sm:inline">{isAr ? 'Ask AI 🌐' : 'Ask AI 🌐'}</span>
                   </button>
                 </div>
               </div>
@@ -594,107 +564,75 @@ export const SearchView: React.FC = () => {
             </div>
           </div>
 
-          {/* 1. Live Web Evidence Section (PRD User Request: "يبحث في النت ايضا") */}
-          {(activeFilter === 'All' || activeFilter === 'Web Evidence') && includeWebSearch && (
-            <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-teal-500/40 shadow-xl space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-xl bg-teal-500/20 text-teal-400">
-                    <Globe className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                      <span>{isAr ? 'نتائج الإنترنت الحي والأبحاث الحديثة' : 'Live Medical Web & Recent Online Evidence'}</span>
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/30">
-                        Google Grounded
-                      </span>
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Grounded in real-time medical literature, PubMed, Cochrane, and European/American society updates.
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setTutorInitialPrompt(`Based on recent online literature and PubMed trials for "${query}", synthesize the clinical guidelines and operative consensus.`);
-                    setActiveTab('tutor');
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition cursor-pointer shrink-0 shadow-md"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Ask AI on Web Findings</span>
-                </button>
+          {/* Informational Callout: Ask AI Exclusive Web Capability */}
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-teal-500/15 text-teal-400 shrink-0">
+                <BookOpen className="w-4 h-4" />
               </div>
-
-              {isSearchingWeb ? (
-                <div className="py-6 text-center space-y-2">
-                  <RotateCw className="w-6 h-6 text-teal-400 animate-spin mx-auto" />
-                  <p className="text-xs text-slate-300 font-medium">
-                    {isAr ? 'جارٍ استرجاع أحدث الأبحاث والإرشادات من شبكة الإنترنت...' : 'Querying PubMed, EJVES, and Journal of Vascular Surgery online...'}
-                  </p>
-                </div>
-              ) : webEvidence ? (
-                <div className="space-y-3.5">
-                  <div className="text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-wrap font-sans bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
-                    {webEvidence.summary}
-                  </div>
-
-                  {/* Sources with links */}
-                  {webEvidence.sources && webEvidence.sources.length > 0 && (
-                    <div className="space-y-1.5 pt-1">
-                      <span className="text-[11px] font-mono font-bold text-teal-400 uppercase tracking-wider block">
-                        Direct Online Medical Citations & Source Links:
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                        {webEvidence.sources.map((src, idx) => (
-                          <a
-                            key={idx}
-                            href={src.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700/80 text-xs text-slate-300 hover:text-white transition flex items-center justify-between gap-2 group"
-                          >
-                            <span className="truncate font-medium">{src.title}</span>
-                            <ExternalLink className="w-3.5 h-3.5 text-teal-400 shrink-0 group-hover:scale-110 transition" />
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-400">
-                  Enter a query above to fetch verified live medical evidence and online research citations.
+              <div>
+                <p className="font-semibold text-white">
+                  {isAr ? 'البحث هنا مقصور حصرياً على الكتب المرفوعة' : 'Search here is strictly limited to uploaded books & guidelines'}
                 </p>
-              )}
-            </div>
-          )}
-
-          {/* 2. All Books & Internal References Section */}
-          {(activeFilter === 'All' || activeFilter !== 'Web Evidence') && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-teal-400" />
-                  <span>
-                    {isAr ? `نتائج البحث في كتب التطبيق (${references.length} كتب مفهرسة)` : `Results from All App Textbooks & Guidelines (${references.length} Books)`}
-                  </span>
-                </h3>
-                <span className="text-xs text-slate-400 font-mono">
-                  {searchResults.length} {isAr ? 'نتائج مطابقة' : 'matches found'}
-                </span>
+                <p className="text-[11px] text-slate-400">
+                  {isAr
+                    ? 'قسم (Ask AI) هو المكان الوحيد المخول بالبحث في مصادر الإنترنت الطبية الموثقة خارج الكتب المرفوعة.'
+                    : 'The (Ask AI) workspace is the exclusive section permitted to fetch verified external medical evidence from the live web.'}
+                </p>
               </div>
+            </div>
 
-              {searchResults.length === 0 ? (
-                <div className="p-10 text-center rounded-3xl bg-slate-900 border border-slate-800 space-y-2">
-                  <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
-                  <h4 className="text-sm font-bold text-white">No internal book matches found</h4>
-                  <p className="text-xs text-slate-400">
-                    Try another surgical keyword or consult the live web results above.
-                  </p>
+            <button
+              onClick={() => {
+                setTutorInitialPrompt(query);
+                setActiveTab('tutor');
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 hover:text-white font-semibold transition cursor-pointer shrink-0"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>{isAr ? 'البحث بالإنترنت عبر Ask AI 🌐' : 'Ask AI Web Search 🌐'}</span>
+            </button>
+          </div>
+
+          {/* All Books & Internal References Section */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-teal-400" />
+                <span>
+                  {isAr ? `نتائج البحث في الكتب المرفوعة (${references.length} كتب مفهرسة)` : `Results from Uploaded Books (${references.length} Books)`}
+                </span>
+              </h3>
+              <span className="text-xs text-slate-400 font-mono">
+                {searchResults.length} {isAr ? 'نتائج مطابقة' : 'matches found'}
+              </span>
+            </div>
+
+            {searchResults.length === 0 ? (
+              <div className="p-8 sm:p-10 text-center rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+                <h4 className="text-sm sm:text-base font-bold text-white">
+                  {isAr ? 'عذراً، الإجابة غير موجودة في الكتب المرفوعة.' : 'Sorry, the answer was not found in the uploaded books.'}
+                </h4>
+                <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                  {isAr
+                    ? 'لم يتم العثور على أي تطابق داخل الكتب المرفوعة. يمكنك البحث في مصادر الإنترنت الطبية الموثقة حصرياً من خلال Ask AI.'
+                    : 'No matches found within the uploaded books. You can query authoritative external web sources exclusively via Ask AI.'}
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => {
+                      setTutorInitialPrompt(query);
+                      setActiveTab('tutor');
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition shadow-md cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>{isAr ? '🌐 الانتقال إلى Ask AI للبحث في مصادر الإنترنت الموثقة' : '🌐 Search External Online Sources via Ask AI'}</span>
+                  </button>
                 </div>
-              ) : (
+              </div>
+            ) : (
                 searchResults.map(result => (
                   <div
                     key={result.id}
@@ -792,7 +730,6 @@ export const SearchView: React.FC = () => {
                 ))
               )}
             </div>
-          )}
         </div>
       ) : (
         /* Reference Comparison Matrix */
@@ -940,22 +877,15 @@ export const SearchView: React.FC = () => {
                 <span className="flex items-center gap-1.5 text-teal-300 font-bold truncate">
                   <span className="w-2 h-2 rounded-full bg-teal-400 animate-ping"></span>
                   {isAr
-                    ? `بحث متزامن: كل الكتب (${references.length}) + الويب`
-                    : `Live Search: All ${references.length} Books + Web`}
+                    ? `البحث في الكتب المرفوعة (${references.length})`
+                    : `Searching Uploaded Books (${references.length})`}
                 </span>
 
                 <span className="hidden sm:inline text-slate-600">•</span>
 
                 <span className="hidden sm:inline text-slate-300">
-                  {searchResults.length} {isAr ? 'نتيجة في الكتب' : 'book matches'}
+                  {searchResults.length} {isAr ? 'نتيجة في الكتب' : 'matches found'}
                 </span>
-
-                {isSearchingWeb && (
-                  <span className="text-amber-400 flex items-center gap-1 animate-pulse">
-                    <RotateCw className="w-3 h-3 animate-spin" />
-                    {isAr ? 'فحص الويب...' : 'Web search...'}
-                  </span>
-                )}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -994,8 +924,8 @@ export const SearchView: React.FC = () => {
                   type="text"
                   placeholder={
                     isAr
-                      ? 'اكتب هنا للبحث المباشر في كل الكتب والإنترنت (مثل: Rutherford, EVAR, Fasciotomy)...'
-                      : 'Type here to search across all books & live medical web...'
+                      ? 'اكتب هنا للبحث المباشر في الكتب والمراجع المرفوعة (مثل: Rutherford, EVAR, Fasciotomy)...'
+                      : 'Type here to search across all uploaded books & guidelines...'
                   }
                   value={query}
                   onChange={e => {
@@ -1024,16 +954,15 @@ export const SearchView: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => setIncludeWebSearch(!includeWebSearch)}
-                    className={`px-2 py-1 rounded-lg text-[10px] sm:text-xs font-semibold flex items-center gap-1 transition cursor-pointer ${
-                      includeWebSearch
-                        ? 'bg-teal-500/25 text-teal-300 border border-teal-500/50'
-                        : 'bg-slate-700 text-slate-400 border border-slate-600'
-                    }`}
-                    title="Toggle Live Web Grounding Search"
+                    onClick={() => {
+                      setTutorInitialPrompt(query);
+                      setActiveTab('tutor');
+                    }}
+                    className="px-2 py-1 rounded-lg text-[10px] sm:text-xs font-semibold flex items-center gap-1 transition cursor-pointer bg-slate-700 hover:bg-slate-600 text-sky-300 border border-slate-600"
+                    title={isAr ? 'الانتقال إلى Ask AI للبحث في الإنترنت الموثق' : 'Ask AI Web Search'}
                   >
-                    <Globe className={`w-3 h-3 ${includeWebSearch ? 'text-teal-400 animate-spin-slow' : 'text-slate-400'}`} />
-                    <span className="hidden sm:inline">{includeWebSearch ? (isAr ? 'الويب مفعل' : '+ Web') : '+ Web Off'}</span>
+                    <Globe className="w-3 h-3 text-sky-400" />
+                    <span className="hidden sm:inline">{isAr ? 'Ask AI 🌐' : 'Ask AI 🌐'}</span>
                   </button>
                 </div>
               </div>

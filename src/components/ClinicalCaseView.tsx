@@ -182,9 +182,15 @@ export const ClinicalCaseView: React.FC = () => {
           <div className="rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
               <div>
-                <span className="text-[10px] font-mono font-bold text-teal-400 uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-500/10 border border-teal-500/30">
-                  {selectedCase.difficulty} Level Scenario
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold text-teal-400 uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-500/10 border border-teal-500/30">
+                    {selectedCase.difficulty} Level Scenario
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30" title="Cached via Workbox Service Worker for offline review">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    Workbox Offline Ready
+                  </span>
+                </div>
                 <h3 className="text-lg sm:text-xl font-bold text-white mt-1">
                   {isAr && selectedCase.titleAr ? selectedCase.titleAr : selectedCase.title}
                 </h3>

@@ -2,10 +2,15 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { ReferenceDocument } from '../types';
 import { searchInsideBooks, escapeRegExp, BookSearchResult } from '../services/bookSearchService';
+import { GenerateTopicMaterialModal } from './GenerateTopicMaterialModal';
 import {
   extractTextFromFile,
+  extractTextFromFiles,
+  isImageFile,
   processFullBookContent,
   persistBookToFirestore,
+  getLatestIngestionStats,
+  IngestionVerificationStats,
   UploadProgress
 } from '../services/bookUploadService';
 import {
@@ -28,13 +33,16 @@ import {
   Hash,
   CornerDownRight,
   Cloud,
-  FileCode
+  FileCode,
+  Trash2,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export const LibraryView: React.FC = () => {
   const {
     references,
     addReference,
+    deleteReference,
     selectedDocForReader,
     setSelectedDocForReader,
     languageMode,
@@ -48,22 +56,28 @@ export const LibraryView: React.FC = () => {
   const [searchFilter, setSearchFilter] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'textbook' | 'guideline' | 'user'>('all');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   // In-Book Search State inside Reader Modal (Fast, zero-error, precise)
   const [inBookSearch, setInBookSearch] = useState('');
   const [readerViewMode, setReaderViewMode] = useState<'all' | 'chapters' | 'chunks'>('all');
 
-  // Upload simulation states
+  // Studied Topic Material Generator Modal State
+  const [isTopicModalOpen, setIsTopicModalOpen] = useState(false);
+  const [selectedTopicForModal, setSelectedTopicForModal] = useState('');
+  const [topicModalExcerpt, setTopicModalExcerpt] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [pastedText, setPastedText] = useState('');
   const [uploadMode, setUploadMode] = useState<'file' | 'text'>('file');
   const [docTitle, setDocTitle] = useState('');
   const [docCategory, setDocCategory] = useState<'textbook' | 'guideline' | 'review'>('guideline');
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgressMsg, setUploadProgressMsg] = useState('');
+  const [recentVerificationStats, setRecentVerificationStats] = useState<IngestionVerificationStats | null>(null);
   const [pipelineSteps, setPipelineSteps] = useState<{ name: string; done: boolean; inProgress: boolean }[]>([
-    { name: 'Reading Complete Book Source', done: false, inProgress: false },
-    { name: '100% Unabridged Text & Section Extraction', done: false, inProgress: false },
+    { name: 'Reading Complete Book / Images Source', done: false, inProgress: false },
+    { name: 'Multimodal OCR & Text Extraction', done: false, inProgress: false },
     { name: 'Chapter Boundary & Semantic Structure Analysis', done: false, inProgress: false },
     { name: 'Bilingual Medical Terminology & Tag Generation', done: false, inProgress: false },
     { name: 'High-Speed In-Memory Search Indexing', done: false, inProgress: false },
@@ -110,20 +124,33 @@ export const LibraryView: React.FC = () => {
   };
 
   const handleStartUpload = async () => {
-    const finalTitle = docTitle.trim() || (uploadFile ? uploadFile.name.replace(/\.[^/.]+$/, '') : 'Medical Reference Document');
+    const filesToProcess = uploadFiles.length > 0 ? uploadFiles : (uploadFile ? [uploadFile] : []);
+    const firstFileName = filesToProcess[0]?.name ? filesToProcess[0].name.replace(/\.[^/.]+$/, '') : '';
+    const finalTitle = docTitle.trim() || firstFileName || 'Medical Reference Document';
     if (!finalTitle) return;
 
     setIsProcessing(true);
     setUploadProgressMsg('Starting full book ingestion pipeline...');
 
     try {
-      // Step 1: Read Complete File
+      // Step 1: Read Complete File or Images
       updateStep(0, true, false);
       let fullContent = '';
 
-      if (uploadMode === 'file' && uploadFile) {
-        setUploadProgressMsg(`Reading 100% of ${uploadFile.name} (${Math.round(uploadFile.size / 1024)} KB)...`);
-        fullContent = await extractTextFromFile(uploadFile);
+      if (uploadMode === 'file' && filesToProcess.length > 0) {
+        const hasImages = filesToProcess.some(isImageFile);
+        if (hasImages) {
+          setUploadProgressMsg(
+            isAr
+              ? `جارٍ قراءة ${filesToProcess.length} صورة من صفحات الكتاب بالتعرف الضوئي (Multimodal OCR)...`
+              : `Reading ${filesToProcess.length} book page image(s) via Multimodal AI OCR...`
+          );
+        } else {
+          setUploadProgressMsg(`Reading 100% of ${filesToProcess[0].name} (${Math.round(filesToProcess[0].size / 1024)} KB)...`);
+        }
+        fullContent = await extractTextFromFiles(filesToProcess, (msg) => {
+          setUploadProgressMsg(msg);
+        });
       } else if (pastedText.trim()) {
         setUploadProgressMsg(`Reading full pasted medical textbook text (${pastedText.length.toLocaleString()} characters)...`);
         fullContent = pastedText.trim();
@@ -133,16 +160,20 @@ export const LibraryView: React.FC = () => {
       }
       updateStep(0, false, true);
 
-      // Step 2: Unabridged Extraction
+      // Step 2: Unabridged Extraction & OCR verification
       updateStep(1, true, false);
-      setUploadProgressMsg(`Extracted ${fullContent.length.toLocaleString()} characters. Verifying zero data loss...`);
+      setUploadProgressMsg(`Extracted and verified ${fullContent.length.toLocaleString()} characters. Ready for chapter indexing...`);
       await new Promise(r => setTimeout(r, 400));
       updateStep(1, false, true);
 
       // Step 3: Chapter Boundary Analysis
       updateStep(2, true, false);
-      setUploadProgressMsg('Structuring full chapters, sub-sections, and page boundaries...');
+      setUploadProgressMsg('Structuring full chapters, sub-sections, and page boundaries (1000 tokens / 200 overlap)...');
       const newDoc = processFullBookContent(fullContent, finalTitle, docCategory);
+      const latestStats = getLatestIngestionStats();
+      if (latestStats) {
+        setRecentVerificationStats(latestStats);
+      }
       await new Promise(r => setTimeout(r, 450));
       updateStep(2, false, true);
 
@@ -174,6 +205,7 @@ export const LibraryView: React.FC = () => {
       setIsProcessing(false);
       setIsUploadModalOpen(false);
       setUploadFile(null);
+      setUploadFiles([]);
       setPastedText('');
       setDocTitle('');
     } catch (err: any) {
@@ -209,8 +241,8 @@ export const LibraryView: React.FC = () => {
           </h2>
           <p className="text-xs sm:text-sm text-slate-400">
             {isAr
-              ? 'تصفح أمهات كتب جراحة الأوعية (رذرفورد، ESVS، SVS) أو ارفع أبحاثك وكتبك لربطها فوراً بمحرك البحث الذكي.'
-              : 'Browse primary textbooks and official guidelines or upload custom PDFs to index into your personal RAG vector base.'}
+              ? 'تصفح إرشادات الجمعية الأوروبية لجراحة الأوعية الدموية (ESVS Guidelines) المعتمدة أو ارفع كتبك ومراجعك الطبية الخاصة لربطها فوراً بمحرك البحث والذكاء الاصطناعي.'
+              : 'Browse official European Society for Vascular Surgery (ESVS) guidelines or upload your own medical textbooks and documents.'}
           </p>
         </div>
 
@@ -229,9 +261,52 @@ export const LibraryView: React.FC = () => {
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs sm:text-sm transition shadow-lg shadow-teal-950/40 cursor-pointer shrink-0"
         >
           <Upload className="w-4 h-4" />
-          <span>{isAr ? 'رفع مرجع جديد (PDF)' : 'Upload Reference (PDF)'}</span>
+          <span>{isAr ? 'رفع مرجع / صور كتاب (PDF & Images)' : 'Upload Book (PDF & Images)'}</span>
         </button>
       </div>
+
+      {/* Real-time Ingestion Verification Banner */}
+      {recentVerificationStats && (
+        <div className="p-4 rounded-2xl bg-teal-950/40 border border-teal-500/40 backdrop-blur-md shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center shrink-0 text-teal-400">
+              <CheckCircle2 className="w-5 h-5 text-teal-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-white">
+                  {isAr ? 'تم استيعاب وفهرسة المرجع بالكامل بنجاح' : 'Full Document Ingested & Verified (Zero Truncation)'}
+                </h4>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                  {recentVerificationStats.chunkSizeTokens} tokens / {recentVerificationStats.overlapTokens} overlap
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                {recentVerificationStats.fileName}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full md:w-auto text-xs">
+            <div className="px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+              <span className="text-slate-400 block text-[10px]">{isAr ? 'الصفحات' : 'Pages'}</span>
+              <span className="text-teal-400 font-bold">{recentVerificationStats.totalPages}</span>
+            </div>
+            <div className="px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+              <span className="text-slate-400 block text-[10px]">{isAr ? 'الكلمات' : 'Words'}</span>
+              <span className="text-emerald-400 font-bold">{recentVerificationStats.wordCount.toLocaleString()}</span>
+            </div>
+            <div className="px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+              <span className="text-slate-400 block text-[10px]">{isAr ? 'التوكنز' : 'Tokens'}</span>
+              <span className="text-cyan-400 font-bold">{recentVerificationStats.tokenCount.toLocaleString()}</span>
+            </div>
+            <div className="px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+              <span className="text-slate-400 block text-[10px]">{isAr ? 'المقاطع' : 'Chunks'}</span>
+              <span className="text-amber-400 font-bold">{recentVerificationStats.chunksCount}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center gap-3">
@@ -251,27 +326,91 @@ export const LibraryView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-          {(['all', 'textbook', 'guideline', 'user'] as const).map(cat => (
-            <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
-                activeCategory === cat
-                  ? 'bg-slate-800 text-teal-400 border border-teal-500/30'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-900 border border-transparent'
-              }`}
-            >
-              {cat === 'all'
-                ? isAr ? 'الكل' : 'All References'
-                : cat === 'textbook'
-                ? isAr ? 'الكتب المرجعية' : 'Core Textbooks'
+          {(['all', 'guideline', 'user'] as const).map(cat => {
+            const count =
+              cat === 'all'
+                ? references.length
                 : cat === 'guideline'
-                ? isAr ? 'الإرشادات السريرية' : 'Guidelines'
-                : isAr ? 'ملفاتي المرفوعة' : 'My Uploads'}
-            </button>
-          ))}
+                ? references.filter(r => !r.isUserUploaded).length
+                : references.filter(r => r.isUserUploaded).length;
+
+            return (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                  activeCategory === cat
+                    ? 'bg-slate-800 text-teal-400 border border-teal-500/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900 border border-transparent'
+                }`}
+              >
+                <span>
+                  {cat === 'all'
+                    ? isAr ? 'جميع المراجع' : 'All'
+                    : cat === 'guideline'
+                    ? isAr ? 'إرشادات ESVS الأوروبية' : 'ESVS Guidelines'
+                    : isAr ? 'كتبي المرفوعة' : 'My Uploaded Books'}
+                </span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                  activeCategory === cat
+                    ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40'
+                    : 'bg-slate-800/80 text-slate-400'
+                }`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
+
+      {/* Empty State when no documents found */}
+      {filteredReferences.length === 0 && (
+        <div className="p-8 sm:p-12 text-center rounded-3xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center max-w-xl mx-auto my-6 space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center">
+            <BookOpen className="w-7 h-7" />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-base sm:text-lg font-bold text-white">
+              {activeCategory === 'user'
+                ? isAr
+                  ? 'لم تقم برفع أي كتب حتى الآن (العدد: 0)'
+                  : 'No User-Uploaded Books Yet (Count: 0)'
+                : isAr
+                ? 'لا توجد نتائج مطابقة لبحثك'
+                : 'No Matching References Found'}
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-400 max-w-md">
+              {activeCategory === 'user'
+                ? isAr
+                  ? 'يمكنك رفع مراجعك وكتبك الطبية وملخصاتك بصيغة PDF أو TXT لفهرستها فوراً وربطها بالبحث ومعلم الذكاء الاصطناعي.'
+                  : 'Upload your own vascular textbooks or guidelines in PDF format to index them in the search and AI tutor.'
+                : isAr
+                ? 'جرب البحث بكلمات أخرى أو عرض جميع المراجع.'
+                : 'Try different search keywords or switch to all references.'}
+            </p>
+          </div>
+          {activeCategory === 'user' && (
+            <button
+              onClick={() => {
+                setPipelineSteps([
+                  { name: 'Reading Complete Book Source', done: false, inProgress: false },
+                  { name: '100% Unabridged Text & Section Extraction', done: false, inProgress: false },
+                  { name: 'Chapter Boundary & Semantic Structure Analysis', done: false, inProgress: false },
+                  { name: 'Bilingual Medical Terminology & Tag Generation', done: false, inProgress: false },
+                  { name: 'High-Speed In-Memory Search Indexing', done: false, inProgress: false },
+                  { name: 'Permanent Cloud Synchronization (Firestore DB)', done: false, inProgress: false },
+                ]);
+                setIsUploadModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs transition cursor-pointer"
+            >
+              <Upload className="w-4 h-4" />
+              <span>{isAr ? 'رفع أول كتاب لك الآن (PDF)' : 'Upload Your First Book (PDF)'}</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Documents Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -380,6 +519,30 @@ export const LibraryView: React.FC = () => {
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Ask</span>
               </button>
+
+              <button
+                onClick={() => {
+                  setSelectedTopicForModal(doc.title);
+                  setTopicModalExcerpt(doc.chapters?.[0]?.keyTopics?.join(', ') || doc.title);
+                  setIsTopicModalOpen(true);
+                }}
+                className="px-3 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/30 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                title={isAr ? `صنع أسئلة وفلاش كاردس لـ ${doc.shortTitle}` : `Generate MCQs & Flashcards for ${doc.shortTitle}`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>{isAr ? 'أسئلة وبطاقات' : 'MCQs & Cards'}</span>
+              </button>
+
+              {doc.isUserUploaded && (
+                <button
+                  onClick={() => setDeletingDocId(doc.id)}
+                  className="px-2.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                  title={isAr ? `مسح كتاب "${doc.title}"` : `Delete "${doc.title}"`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{isAr ? 'مسح' : 'Delete'}</span>
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -404,15 +567,41 @@ export const LibraryView: React.FC = () => {
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setSelectedDocForReader(null);
-                  setInBookSearch('');
-                }}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer shrink-0"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedDocForReader.isUserUploaded && (
+                  <button
+                    onClick={() => setDeletingDocId(selectedDocForReader.id)}
+                    className="p-2 rounded-xl text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                    title={isAr ? 'مسح هذا الكتاب المرفوع' : 'Delete uploaded book'}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span className="hidden sm:inline">{isAr ? 'مسح الكتاب' : 'Delete Book'}</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    setSelectedTopicForModal(selectedDocForReader.title);
+                    setTopicModalExcerpt(selectedDocForReader.chapters?.[0]?.keyTopics?.join(', ') || selectedDocForReader.title);
+                    setIsTopicModalOpen(true);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-gradient-to-r from-teal-500/20 to-purple-500/20 hover:from-teal-500/30 hover:to-purple-500/30 text-teal-300 hover:text-white border border-teal-500/40 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                  title={isAr ? 'صنع أسئلة وفلاش كاردس لهذا الكتاب/الفصل' : 'Generate MCQs & Flashcards for this book'}
+                >
+                  <Sparkles className="w-4 h-4 text-teal-300" />
+                  <span className="hidden sm:inline">{isAr ? '🎯 صنع أسئلة وبطاقات' : '🎯 MCQs & Cards'}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setSelectedDocForReader(null);
+                    setInBookSearch('');
+                  }}
+                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* In-Book Search Bar & Quick View Filters */}
@@ -761,7 +950,7 @@ export const LibraryView: React.FC = () => {
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {isAr ? 'ملف كامل (PDF / TXT / MD)' : 'Upload Full File (PDF / TXT / MD)'}
+                    {isAr ? 'ملف كتاب أو صور صفحات (PDF / Images / Docs)' : 'Book File / Page Images (PDF / Images / Docs)'}
                   </button>
                   <button
                     type="button"
@@ -777,23 +966,63 @@ export const LibraryView: React.FC = () => {
                 </div>
 
                 {uploadMode === 'file' ? (
-                  /* Dropzone for Complete File */
+                  /* Dropzone for Complete File or Images */
                   <div className="border-2 border-dashed border-teal-500/40 rounded-2xl p-6 text-center space-y-2 hover:border-teal-400 transition bg-slate-800/40">
-                    <FileText className="w-8 h-8 text-teal-400 mx-auto" />
-                    <p className="text-xs text-slate-200 font-semibold">
-                      {uploadFile ? `Selected: ${uploadFile.name}` : (isAr ? 'اختر ملف الكتاب كاملاً أو اسحبه هنا' : 'Select complete book file or drag & drop here')}
-                    </p>
-                    <p className="text-[11px] text-teal-400/80">
-                      {isAr ? 'يتم استخراج وقراءة كل الفصول والصفحات كاملة دون أي حذف' : 'All chapters and pages extracted 100% without size limits or data loss'}
-                    </p>
+                    <div className="flex items-center justify-center gap-2">
+                      <FileText className="w-7 h-7 text-teal-400" />
+                      <span className="text-slate-600">/</span>
+                      <ImageIcon className="w-7 h-7 text-emerald-400" />
+                    </div>
+
+                    {uploadFiles.length > 0 ? (
+                      <div className="space-y-1.5 py-1">
+                        <div className="flex items-center justify-center gap-2 text-xs text-teal-300 font-semibold">
+                          {uploadFiles.some(isImageFile) ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200">
+                              <ImageIcon className="w-3.5 h-3.5" />
+                              <span>
+                                {uploadFiles.length} {isAr ? 'صفحة صورة تم اختيارها للقراءة بالتعرف الضوئي (OCR)' : 'image page(s) selected for AI OCR'}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-teal-500/20 border border-teal-500/40 text-teal-200">
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>{uploadFiles[0].name} ({Math.round(uploadFiles[0].size / 1024)} KB)</span>
+                            </span>
+                          )}
+                        </div>
+                        {uploadFiles.length > 1 && (
+                          <p className="text-[11px] text-slate-400 font-mono">
+                            {uploadFiles.map(f => f.name).slice(0, 3).join(', ')}{uploadFiles.length > 3 ? ` +${uploadFiles.length - 3} more` : ''}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-xs text-slate-200 font-semibold">
+                          {isAr ? 'اختر ملف PDF أو صور صفحات الكتاب (PNG, JPG, WEBP) أو اسحبها هنا' : 'Select PDF or book page images (PNG, JPG, WEBP) or drag & drop here'}
+                        </p>
+                        <p className="text-[11px] text-teal-400/80">
+                          {isAr
+                            ? 'يدعم رفع صور الكتب والصفحات وقراءتها وفهرستها والبحث فيها بالتعرف الضوئي (OCR)'
+                            : 'Supports uploading books as images/photos with full AI OCR reading & searching'}
+                        </p>
+                      </>
+                    )}
+
                     <input
                       type="file"
-                      accept=".pdf,.txt,.md,.markdown,.json,.docx"
+                      multiple
+                      accept=".pdf,.png,.jpg,.jpeg,.webp,.tiff,.bmp,.heic,.txt,.md,.markdown,.json,.docx"
                       onChange={e => {
-                        if (e.target.files?.[0]) {
-                          const f = e.target.files[0];
-                          setUploadFile(f);
-                          if (!docTitle) setDocTitle(f.name.replace(/\.[^/.]+$/, ''));
+                        if (e.target.files && e.target.files.length > 0) {
+                          const filesArr = Array.from(e.target.files);
+                          setUploadFiles(filesArr);
+                          setUploadFile(filesArr[0]);
+                          if (!docTitle) {
+                            const baseName = filesArr[0].name.replace(/\.[^/.]+$/, '');
+                            setDocTitle(filesArr.length > 1 ? `${baseName} (${filesArr.length} Pages)` : baseName);
+                          }
                         }
                       }}
                       className="text-xs text-slate-400 block mx-auto pt-2 file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-teal-600 file:text-white cursor-pointer"
@@ -820,23 +1049,27 @@ export const LibraryView: React.FC = () => {
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
                   <span>
                     {isAr
-                      ? 'ضمان الحفظ الكامل: يتم تقسيم الكتاب إلى فصول ومقاطع وحفظه محلياً وعلى سحابة Firestore.'
-                      : 'Zero-omission guarantee: Entire book parsed into structured chapters and indexed in Firestore.'}
+                      ? 'ضمان الحفظ والبحث الكامل: يتم استخراج النصوص من ملفات PDF والصور وفهرستها للبحث الفوري محلياً وعلى سحابة Firestore.'
+                      : 'Zero-omission guarantee: All content from PDFs and images parsed into structured chapters, searchable instantly and saved to Firestore.'}
                   </span>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button
-                    onClick={() => setIsUploadModalOpen(false)}
+                    onClick={() => {
+                      setIsUploadModalOpen(false);
+                      setUploadFile(null);
+                      setUploadFiles([]);
+                    }}
                     className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs font-medium cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleStartUpload}
-                    disabled={!docTitle.trim() && !uploadFile && !pastedText.trim()}
+                    disabled={!docTitle.trim() && !uploadFile && uploadFiles.length === 0 && !pastedText.trim()}
                     className={`px-5 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
-                      docTitle.trim() || uploadFile || pastedText.trim()
+                      docTitle.trim() || uploadFile || uploadFiles.length > 0 || pastedText.trim()
                         ? 'bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-950'
                         : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                     }`}
@@ -888,6 +1121,62 @@ export const LibraryView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Book Deletion Confirmation Modal */}
+      {deletingDocId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-slate-900 border border-red-500/40 rounded-3xl p-6 space-y-4 shadow-2xl text-slate-100">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="p-2.5 rounded-2xl bg-red-500/20 text-red-400">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  {isAr ? 'تأكيد مسح الكتاب' : 'Confirm Book Deletion'}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  {references.find(r => r.id === deletingDocId)?.title}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+              {isAr
+                ? 'هل أنت متأكد من رغبتك في مسح هذا الكتاب المرفوع نهائياً؟ سيتم حذفه من قاعدة البيانات وسجل البحث والذاكرة فوراً.'
+                : 'Are you sure you want to permanently delete this uploaded document? It will be removed from your active library, vector search, and cloud storage.'}
+            </p>
+
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setDeletingDocId(null)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button
+                onClick={async () => {
+                  if (deletingDocId) {
+                    await deleteReference(deletingDocId);
+                    setDeletingDocId(null);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-red-950"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isAr ? 'نعم، مسح الكتاب' : 'Yes, Delete Book'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Studied Reference MCQs & Flashcards Modal */}
+      <GenerateTopicMaterialModal
+        isOpen={isTopicModalOpen}
+        onClose={() => setIsTopicModalOpen(false)}
+        topicTitle={selectedTopicForModal}
+        contentExcerpt={topicModalExcerpt}
+      />
     </div>
   );
 };

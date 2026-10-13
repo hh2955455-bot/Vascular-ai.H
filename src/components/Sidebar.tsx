@@ -21,7 +21,11 @@ import {
   X,
   ChevronRight,
   ShieldAlert,
-  Smartphone
+  ShieldCheck,
+  Smartphone,
+  UserPlus,
+  UserCheck,
+  Stethoscope
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -34,7 +38,10 @@ export const Sidebar: React.FC = () => {
     setIsBooksCatalogOpen,
     setIsContactDeveloperOpen,
     setIsPhonePermissionsOpen,
-    setIsMedicalDisclaimerOpen
+    setIsMedicalDisclaimerOpen,
+    isRegistered,
+    setIsRegistrationModalOpen,
+    setIsBlackBoxAuditOpen
   } = useApp();
   const isAr = languageMode === 'ar';
 
@@ -111,25 +118,57 @@ export const Sidebar: React.FC = () => {
 
         {/* Uploaded Books & Guidelines Indicator Button */}
         <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-800/60">
+          {/* Doctor Account / Registration Button */}
+          <button
+            onClick={() => setIsRegistrationModalOpen(true)}
+            className={`w-full flex items-center justify-between p-2.5 rounded-2xl border transition cursor-pointer shadow-sm group ${
+              isRegistered
+                ? 'bg-slate-100 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-teal-500/50 text-slate-800 dark:text-slate-200'
+                : 'bg-gradient-to-r from-teal-500/20 to-emerald-500/20 border-teal-500/40 text-teal-300 hover:bg-teal-500/30'
+            }`}
+            title={isAr ? 'تسجيل وتعديل بيانات حساب الطبيب' : 'Register / Edit Doctor Profile'}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <div className={`p-1.5 rounded-lg shrink-0 ${isRegistered ? 'bg-teal-500/20 text-teal-400' : 'bg-teal-500 text-slate-950 animate-pulse'}`}>
+                {isRegistered ? <Stethoscope className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+              </div>
+              <div className="text-left min-w-0">
+                <p className="font-bold text-xs leading-tight truncate">
+                  {userProfile.name || (isAr ? 'تسجيل حساب الطبيب' : 'Doctor Registration')}
+                </p>
+                <p className="text-[10px] text-teal-500 dark:text-teal-400 font-medium truncate">
+                  {isRegistered ? userProfile.specialty : (isAr ? 'الاسم - الجيميل - التخصص' : 'Name - Gmail - Specialty')}
+                </p>
+              </div>
+            </div>
+            {isRegistered ? (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" title="Active"></span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-teal-500/20 text-teal-300 font-bold border border-teal-500/40 shrink-0">
+                {isAr ? 'تسجيل' : 'Register'}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => setIsBooksCatalogOpen(true)}
-            className="w-full flex items-center justify-between p-2.5 lg:p-3 rounded-2xl bg-teal-500/10 border border-teal-500/30 hover:bg-teal-500/20 hover:border-teal-500/60 text-teal-700 dark:text-teal-300 font-semibold text-xs transition cursor-pointer shadow-sm group"
+            className="w-full flex items-center justify-between p-2.5 lg:p-3 rounded-2xl bg-teal-500/10 dark:bg-teal-500/15 border border-teal-500/30 hover:bg-teal-500/20 hover:border-teal-500/60 text-teal-700 dark:text-teal-300 font-semibold text-xs transition cursor-pointer shadow-sm group"
             title={isAr ? 'عرض وتصفح قائمة الكتب والمراجع المرفوعة بالتطبيق' : 'View all uploaded & indexed medical textbooks'}
           >
             <div className="flex items-center gap-2 min-w-0">
-              <div className="p-1.5 rounded-lg bg-teal-500/20 text-teal-400 group-hover:scale-110 transition shrink-0">
+              <div className="p-1.5 rounded-lg bg-teal-500/20 text-teal-600 dark:text-teal-400 group-hover:scale-110 transition shrink-0">
                 <Library className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
               </div>
-              <div className="text-left min-w-0">
-                <p className="font-bold text-white text-xs leading-tight truncate">
+              <div className="text-left rtl:text-right min-w-0">
+                <p className="font-bold text-slate-900 dark:text-white text-xs leading-tight truncate">
                   {isAr ? 'الكتب والمراجع' : 'Uploaded Books'}
                 </p>
-                <p className="text-[10px] text-teal-400 font-mono truncate">
+                <p className="text-[10px] text-teal-600 dark:text-teal-400 font-mono truncate">
                   {isAr ? 'مفهرسة في البحث' : 'Active in Search'}
                 </p>
               </div>
             </div>
-            <span className="px-1.5 lg:px-2 py-0.5 rounded-full bg-teal-400/20 text-teal-200 text-xs font-mono font-black border border-teal-400/40 shrink-0">
+            <span className="px-1.5 lg:px-2 py-0.5 rounded-full bg-teal-500/15 dark:bg-teal-400/20 text-teal-700 dark:text-teal-200 text-xs font-mono font-black border border-teal-500/30 dark:border-teal-400/40 shrink-0">
               {references.length}
             </span>
           </button>
@@ -156,6 +195,28 @@ export const Sidebar: React.FC = () => {
             <span className="text-[10px] text-indigo-400 font-bold shrink-0">
               ✉
             </span>
+          </button>
+
+          {/* Black Box Audit Trail Quick Trigger */}
+          <button
+            onClick={() => setIsBlackBoxAuditOpen(true)}
+            className="w-full flex items-center justify-between p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-teal-500/30 hover:border-teal-500/60 text-teal-300 hover:text-white text-[11px] transition cursor-pointer group shadow-sm"
+            title={isAr ? 'سجل الصندوق الأسود: التدقيق والأمان الطبي (1 Year Retention)' : 'Black Box: Medical Audit Trail & Flight Recorder'}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="p-1 rounded-lg bg-teal-500/20 text-teal-400 group-hover:scale-110 transition shrink-0">
+                <ShieldCheck className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-left rtl:text-right min-w-0">
+                <p className="font-bold text-white text-[11px] leading-tight truncate">
+                  {isAr ? 'سجل الصندوق الأسود' : 'Black Box Audit'}
+                </p>
+                <p className="text-[10px] text-teal-400 font-mono truncate">
+                  {isAr ? 'سجل محمي وغير قابل للحذف' : 'Append-Only (1 Yr)'}
+                </p>
+              </div>
+            </div>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" title="Active"></span>
           </button>
 
           {/* Phone Permissions Quick Trigger */}
@@ -362,6 +423,24 @@ export const Sidebar: React.FC = () => {
                       <span>{isAr ? 'أذونات الهاتف وإشعارات القراءة' : 'Phone Alerts & Permissions'}</span>
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </button>
+
+                  {/* Black Box Audit Trail in drawer */}
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      setIsBlackBoxAuditOpen(true);
+                    }}
+                    className="w-full p-3 rounded-2xl bg-slate-900 border border-teal-500/40 text-teal-300 font-semibold text-xs flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <ShieldCheck className="w-4 h-4 text-teal-400" />
+                      <div className="text-left rtl:text-right">
+                        <span>{isAr ? 'سجل الصندوق الأسود وأدلة التدقيق' : 'Black Box Audit Trail'}</span>
+                        <p className="text-[10px] text-teal-400 font-mono">{isAr ? 'حفظ دائم 1 سنة+' : 'Immutable 1-Yr Retention'}</p>
+                      </div>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                   </button>
 
                   {/* Clinical safety disclaimer */}
