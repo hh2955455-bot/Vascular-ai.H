@@ -3,6 +3,11 @@ import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { doc, setDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
 import { repairCorruptedCharacters } from '../utils/clinicalTextFormatter';
 
+// Invisible-to-the-reader markers that carry the real page number through cleaning/chunking.
+export const PAGE_MARK_PREFIX = '@@PAGE ';
+export const PAGE_MARK_SUFFIX = '@@';
+const PAGE_MARK_REGEX = /@@PAGE (\d+)@@\n?/g;
+
 export interface UploadProgress {
   step: string;
   percent: number;
@@ -31,50 +36,6 @@ export function getLatestIngestionStats(): IngestionVerificationStats | null {
 
 export function setLatestIngestionStats(stats: IngestionVerificationStats): void {
   latestIngestionStats = stats;
-}
-
-/**
- * Robustly decodes PDF escape strings and octal codes (e.g. \040 -> space, \( -> ()
- */
-function decodePdfLiteralString(str: string): string {
-  return str
-    .replace(/\\([0-7]{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '')
-    .replace(/\\t/g, ' ')
-    .replace(/\\b/g, '')
-    .replace(/\\f/g, '')
-    .replace(/\\\(/g, '(')
-    .replace(/\\\)/g, ')')
-    .replace(/\\\\/g, '\\');
-}
-
-/**
- * Decodes PDF hex strings like <48656c6c6f> or UTF-16BE <FEFF...>
- */
-function decodePdfHexString(hex: string): string {
-  const cleanHex = hex.replace(/\s+/g, '');
-  if (cleanHex.length % 2 !== 0) return '';
-  try {
-    if (cleanHex.toUpperCase().startsWith('FEFF')) {
-      // UTF-16BE
-      let result = '';
-      for (let i = 4; i < cleanHex.length; i += 4) {
-        const code = parseInt(cleanHex.slice(i, i + 4), 16);
-        if (!isNaN(code)) result += String.fromCharCode(code);
-      }
-      return result;
-    }
-
-    let bytes = '';
-    for (let i = 0; i < cleanHex.length; i += 2) {
-      const b = parseInt(cleanHex.slice(i, i + 2), 16);
-      if (!isNaN(b)) bytes += String.fromCharCode(b);
-    }
-    return bytes;
-  } catch {
-    return '';
-  }
 }
 
 /**
@@ -240,82 +201,6 @@ export async function extractTextFromFiles(
 }
 
 /**
- * Robust extraction of text streams from PDF binary without external heavy libraries (client-side fallback)
- */
-function extractTextFromPdfBytesClientFallback(bytes: Uint8Array): { fullText: string; pageCount: number } {
-  const decoder = new TextDecoder('latin1');
-  const rawString = decoder.decode(bytes);
-
-  // Estimate page count from /Type /Page occurrences
-  const pageMatches = rawString.match(/\/Type\s*\/Page\b/g);
-  const pageCount = pageMatches ? Math.max(1, pageMatches.length) : 1;
-
-  const textBlocks: string[] = [];
-  
-  // Extract content between BT (Begin Text) and ET (End Text)
-  const btEtRegex = /BT[\s\S]*?ET/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = btEtRegex.exec(rawString)) !== null) {
-    const block = match[0];
-
-    // 1. Extract text in parentheses (Tj / TJ / ' / " operators)
-    const parenRegex = /\(([^)]+)\)\s*(?:Tj|'|")/g;
-    let parenMatch: RegExpExecArray | null;
-    let line = '';
-    while ((parenMatch = parenRegex.exec(block)) !== null) {
-      line += decodePdfLiteralString(parenMatch[1]) + ' ';
-    }
-
-    // 2. Extract hex strings: <48656c6c6f> Tj
-    const hexRegex = /<([0-9a-fA-F]+)>\s*(?:Tj|'|")/g;
-    let hexMatch: RegExpExecArray | null;
-    while ((hexMatch = hexRegex.exec(block)) !== null) {
-      line += decodePdfHexString(hexMatch[1]) + ' ';
-    }
-
-    // 3. Extract text inside TJ arrays: [(text) -10 (more)] TJ or [<4865> -10 <6c6c>] TJ
-    const arrayRegex = /\[(.*?)\]\s*TJ/g;
-    let arrayMatch: RegExpExecArray | null;
-    while ((arrayMatch = arrayRegex.exec(block)) !== null) {
-      const arrContent = arrayMatch[1];
-      const innerParen = /\(([^)]+)\)/g;
-      let innerMatch: RegExpExecArray | null;
-      while ((innerMatch = innerParen.exec(arrContent)) !== null) {
-        line += decodePdfLiteralString(innerMatch[1]) + ' ';
-      }
-
-      const innerHex = /<([0-9a-fA-F]+)>/g;
-      let innerHexMatch: RegExpExecArray | null;
-      while ((innerHexMatch = innerHex.exec(arrContent)) !== null) {
-        line += decodePdfHexString(innerHexMatch[1]) + ' ';
-      }
-    }
-
-    if (line.trim()) {
-      textBlocks.push(line.trim());
-    }
-  }
-
-  if (textBlocks.length > 0) {
-    return { fullText: textBlocks.join('\n\n'), pageCount };
-  }
-
-  // If compressed object streams, search for readable sentences/words
-  const readableRuns = rawString.match(/[\x20-\x7E\u0600-\u06FF]{15,}/g);
-  if (readableRuns && readableRuns.length > 0) {
-    const filtered = readableRuns.filter(
-      r => !r.includes('/Filter') && !r.includes('/Length') && !r.includes('/FlateDecode') && !r.includes('/Font')
-    );
-    if (filtered.length > 5) {
-      return { fullText: filtered.join('\n'), pageCount };
-    }
-  }
-
-  return { fullText: 'Medical reference parsed. Content structured into full indexed chapters.', pageCount };
-}
-
-/**
  * Extracts all readable text from an ArrayBuffer / File
  * Supports TXT, Markdown, JSON, PDF, and Image (PNG, JPG, WEBP) OCR extraction.
  * Guarantees FULL UNABRIDGED INGESTION from start to finish.
@@ -362,72 +247,73 @@ export async function extractTextFromFile(file: File): Promise<string> {
     return imgText;
   }
 
-  // 2. PDF Extraction via Server PDFParse (Handles all FlateDecode, fonts, and full page streams)
+  // 2. PDF Extraction via Server PDFParse. The file is sent as RAW BYTES (not base64/JSON),
+  // so large books upload without the 33% size inflation and without memory spikes.
   if (fileName.endsWith('.pdf') || file.type === 'application/pdf') {
-    let pdfParsedSuccess = false;
+    let data: any = null;
+    let serverError = '';
 
     try {
-      const base64Data = await fileToBase64(file);
-      const res = await fetch('/api/parse-pdf', {
+      const res = await fetch('/api/parse-pdf-raw', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pdfBase64: base64Data,
-          fileName: file.name,
-        }),
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'x-file-name': encodeURIComponent(file.name),
+        },
+        body: file,
       });
-
       if (res.ok) {
-        const data = await res.json();
-        if (data.fullText && data.fullText.trim().length > 30) {
-          extractedRaw = data.fullText;
-          parsedPagesCount = data.totalPages || 1;
-          const wordCount = data.wordCount || extractedRaw.split(/\s+/).filter(Boolean).length;
-          const tokenCount = data.estimatedTokens || Math.round(wordCount * 1.33);
-
-          console.log(`
-============================================================
-📚 [DOCUMENT INGESTION & PARSING VERIFICATION]
-------------------------------------------------------------
-📄 File Name:          "${file.name}"
-📖 Total Pages Parsed: ${parsedPagesCount}
-📝 Total Word Count:   ${wordCount.toLocaleString()} words
-🔢 Total Token Count:  ${tokenCount.toLocaleString()} tokens
-🔤 Total Characters:   ${extractedRaw.length.toLocaleString()} characters
-------------------------------------------------------------
-✨ FULL DOCUMENT INGESTED WITH ZERO TRUNCATION!
-============================================================
-`);
-
-          setLatestIngestionStats({
-            fileName: file.name,
-            totalPages: parsedPagesCount,
-            wordCount,
-            tokenCount,
-            charCount: extractedRaw.length,
-            chunksCount: 0,
-            chaptersCount: 0,
-            chunkSizeTokens: 1000,
-            overlapTokens: 200,
-            timestamp: new Date().toISOString(),
-          });
-
-          pdfParsedSuccess = true;
-          return cleanAndRestoreExtractedText(extractedRaw);
-        }
+        data = await res.json();
+      } else if (res.status === 413) {
+        serverError = 'الملف أكبر من الحد المسموح على السيرفر (File too large for the server).';
+      } else {
+        serverError = `تعذّر قراءة الملف على السيرفر (HTTP ${res.status}). قد يكون الكتاب كبيرًا جدًا على الذاكرة المتاحة.`;
       }
     } catch (serverPdfErr) {
-      console.warn('Server PDF parsing endpoint unreachable, using client parser fallback:', serverPdfErr);
+      console.warn('Server PDF parsing endpoint unreachable:', serverPdfErr);
+      serverError = 'تعذّر الاتصال بالسيرفر أثناء رفع الملف. تأكد من الإنترنت وحاول مرة أخرى (Connection to the server failed).';
     }
 
-    // Client-side fallback if server endpoint is unavailable
-    if (!pdfParsedSuccess) {
-      const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      const fallbackResult = extractTextFromPdfBytesClientFallback(bytes);
-      extractedRaw = fallbackResult.fullText;
-      parsedPagesCount = fallbackResult.pageCount;
+    if (!data || !Array.isArray(data.pages)) {
+      throw new Error(serverError || 'تعذّر قراءة ملف PDF (PDF could not be read).');
     }
+
+    const pages: { pageNumber: number; text: string }[] = data.pages;
+    const nonEmpty = pages.filter(p => p.text && p.text.trim().length >= 20);
+    // Scanned books (pictures of pages, no real text) cannot be searched. Say so clearly instead
+    // of silently storing an empty "book".
+    if (nonEmpty.length === 0 || nonEmpty.length < pages.length * 0.15) {
+      throw new Error(
+        'هذا الكتاب يبدو صورًا ممسوحة ضوئيًا (بدون نص حقيقي)، فلا يمكن قراءته. ارفع نسخة نصية من الكتاب، أو ارفع صفحاته كصور ليتم قراءتها بالـ OCR. ' +
+        '(This PDF looks like scanned images with no text layer.)'
+      );
+    }
+
+    // Keep REAL page numbers: every page is tagged so citations show the true book page.
+    extractedRaw = pages
+      .filter(p => p.text && p.text.trim())
+      .map(p => `\n${PAGE_MARK_PREFIX}${p.pageNumber}${PAGE_MARK_SUFFIX}\n${p.text.trim()}`)
+      .join('\n');
+    parsedPagesCount = data.totalPages || pages.length || 1;
+    const wordCount = extractedRaw.split(/\s+/).filter(Boolean).length;
+    const tokenCount = Math.round(wordCount * 1.33);
+
+    console.log(`[book upload] "${file.name}": ${parsedPagesCount} pages, ${wordCount.toLocaleString()} words, ${data.emptyPages ?? 0} empty pages`);
+
+    const cleanedPdfText = await cleanAndRestoreExtractedText(extractedRaw);
+    setLatestIngestionStats({
+      fileName: file.name,
+      totalPages: parsedPagesCount,
+      wordCount,
+      tokenCount,
+      charCount: cleanedPdfText.length,
+      chunksCount: 0,
+      chaptersCount: 0,
+      chunkSizeTokens: 1000,
+      overlapTokens: 200,
+      timestamp: new Date().toISOString(),
+    });
+    return cleanedPdfText;
   }
 
   // 3. Plaintext, Markdown, HTML, JSON, CSV
@@ -623,11 +509,29 @@ export function recursiveChunkMedicalText(
   // 2. Perform Recursive Chunking with 200 Tokens Overlap inside each Chapter
   const documentChapters: DocumentChapter[] = [];
   const documentChunks: DocumentChunk[] = [];
+  // Real page tracking: PDF text carries @@PAGE n@@ markers. Without markers (pasted text, TXT)
+  // we fall back to one pseudo-page per chunk like before.
+  const hasPageMarks = new RegExp(PAGE_MARK_REGEX.source).test(cleanedText);
   let currentPage = 1;
+  let pageCarry = 1;
+  let chunkSeq = 0;
+
+  const finalizeChunk = (rawContent: string): { content: string; page: number } => {
+    const marks = [...rawContent.matchAll(PAGE_MARK_REGEX)];
+    let page = pageCarry;
+    if (marks.length > 0) {
+      // Page in effect where the chunk starts = first mark if the chunk begins with it, else the carried page
+      const startsWithMark = rawContent.trimStart().startsWith(PAGE_MARK_PREFIX);
+      page = startsWithMark ? parseInt(marks[0][1], 10) : pageCarry;
+      pageCarry = parseInt(marks[marks.length - 1][1], 10);
+    }
+    const content = rawContent.replace(PAGE_MARK_REGEX, '').trim();
+    return { content, page: hasPageMarks ? page : currentPage };
+  };
 
   rawChapters.forEach((rawChap, chapIdx) => {
     const chapterNum = chapIdx + 1;
-    const pageStart = currentPage;
+    const chunksBefore = documentChunks.length;
 
     // Recursive hierarchical splitting:
     // Level 1: Paragraphs (\n\n+)
@@ -675,8 +579,10 @@ export function recursiveChunkMedicalText(
       } else {
         // Current chunk has reached full size (~1000 tokens), commit it
         if (currentChunk.trim().length > 0) {
-          const chunkId = `${docId}-ch${chapterNum}-p${currentPage}-s${sectionIdx}`;
-          const cleanContent = repairCorruptedCharacters(currentChunk.trim());
+          chunkSeq++;
+          const chunkId = `${docId}-c${String(chunkSeq).padStart(6, '0')}`;
+          const fin = finalizeChunk(currentChunk);
+          const cleanContent = repairCorruptedCharacters(fin.content);
           const firstLine = cleanContent.split('\n')[0].replace(/^[#\s]+/, '').slice(0, 60);
 
           documentChunks.push({
@@ -685,7 +591,7 @@ export function recursiveChunkMedicalText(
             document_title: docTitle,
             chapter: repairCorruptedCharacters(rawChap.title),
             section: `Section ${chapterNum}.${sectionIdx}: ${firstLine}...`,
-            page_number: currentPage,
+            page_number: fin.page,
             content: cleanContent,
             tags: extractClinicalTags(cleanContent),
           });
@@ -716,8 +622,10 @@ export function recursiveChunkMedicalText(
 
     // Commit any trailing chunk in this chapter
     if (currentChunk.trim().length > 0) {
-      const chunkId = `${docId}-ch${chapterNum}-p${currentPage}-s${sectionIdx}`;
-      const cleanContent = repairCorruptedCharacters(currentChunk.trim());
+      chunkSeq++;
+      const chunkId = `${docId}-c${String(chunkSeq).padStart(6, '0')}`;
+      const fin = finalizeChunk(currentChunk);
+      const cleanContent = repairCorruptedCharacters(fin.content);
       const firstLine = cleanContent.split('\n')[0].replace(/^[#\s]+/, '').slice(0, 60);
 
       documentChunks.push({
@@ -726,7 +634,7 @@ export function recursiveChunkMedicalText(
         document_title: docTitle,
         chapter: repairCorruptedCharacters(rawChap.title),
         section: `Section ${chapterNum}.${sectionIdx}: ${firstLine}...`,
-        page_number: currentPage,
+        page_number: fin.page,
         content: cleanContent,
         tags: extractClinicalTags(cleanContent),
       });
@@ -734,7 +642,11 @@ export function recursiveChunkMedicalText(
       currentPage++;
     }
 
-    const pageEnd = Math.max(pageStart, currentPage - 1);
+    const chapterChunks = documentChunks.slice(chunksBefore);
+    const pageStart = chapterChunks.length > 0 ? chapterChunks[0].page_number : currentPage;
+    const pageEnd = chapterChunks.length > 0
+      ? Math.max(...chapterChunks.map(c => c.page_number))
+      : pageStart;
 
     documentChapters.push({
       chapterNumber: chapterNum,
@@ -776,8 +688,9 @@ export function processFullBookContent(
     200
   );
 
+  const lastMarkedPage = [...cleanedText.matchAll(PAGE_MARK_REGEX)].reduce((m, x) => Math.max(m, parseInt(x[1], 10)), 0);
   const totalPages = documentChunks.length > 0
-    ? documentChunks[documentChunks.length - 1].page_number
+    ? Math.max(lastMarkedPage, ...documentChunks.map(c => c.page_number))
     : 1;
 
   const totalWords = cleanedText.split(/\s+/).filter(Boolean).length;
@@ -882,7 +795,7 @@ export async function persistBookToFirestore(
 
     // 2. Batch write all chunks in batches of 400 (Firestore limit is 500)
     const chunks = book.chunks;
-    const batchSize = 400;
+    const batchSize = 200;
     const totalBatches = Math.ceil(chunks.length / batchSize);
 
     for (let b = 0; b < totalBatches; b++) {
@@ -906,7 +819,18 @@ export async function persistBookToFirestore(
         });
       });
 
-      await batch.commit();
+      // Retry flaky mobile connections instead of failing the whole book
+      let attempt = 0;
+      for (;;) {
+        try {
+          await batch.commit();
+          break;
+        } catch (commitErr) {
+          attempt++;
+          if (attempt >= 4) throw commitErr;
+          await new Promise(r => setTimeout(r, 1500 * attempt));
+        }
+      }
 
       const pct = Math.round(40 + ((b + 1) / totalBatches) * 55);
       onProgress?.({
@@ -935,7 +859,18 @@ export async function fetchUserBooksFromFirestore(userId: string): Promise<Refer
     const booksSnapshot = await getDocs(collection(db, 'users', userId, 'books'));
     const books: ReferenceDocument[] = [];
 
+    // Books already saved on this device don't need their (possibly thousands of) chunks
+    // downloaded again at every login - that would burn the free Firestore read quota.
+    let localIds = new Set<string>();
+    try {
+      const saved = localStorage.getItem('vascular_user_uploaded_books');
+      if (saved) localIds = new Set((JSON.parse(saved) as ReferenceDocument[]).map(b => b.id));
+    } catch {
+      // ignore
+    }
+
     for (const bookDoc of booksSnapshot.docs) {
+      if (localIds.has(bookDoc.id)) continue;
       const data = bookDoc.data();
       const chunksSnapshot = await getDocs(collection(db, 'users', userId, 'books', bookDoc.id, 'chunks'));
       
@@ -954,7 +889,7 @@ export async function fetchUserBooksFromFirestore(userId: string): Promise<Refer
         };
       });
 
-      chunks.sort((a, b) => a.page_number - b.page_number);
+      chunks.sort((a, b) => a.page_number - b.page_number || a.chunk_id.localeCompare(b.chunk_id));
 
       const chapterMap = new Map<string, { start: number; end: number }>();
       chunks.forEach(c => {

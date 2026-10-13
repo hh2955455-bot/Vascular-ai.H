@@ -1,5 +1,6 @@
 import { ExplanationLevel, LanguageMode, ReferenceDocument, StudyNote, MCQQuestion, Flashcard } from '../types';
 import { INITIAL_REFERENCES } from '../data/referencesData';
+import { retrieveBookContext, expandQueryTerms, containsArabic } from './bookRetrieval';
 import {
   CLINICAL_TOPICS_DATABASE,
   MedicalDiagramResource,
@@ -1183,142 +1184,19 @@ export async function askVascularTutor(options: GenerateOptions): Promise<TutorR
     !contextDocumentId || d.id === contextDocumentId
   );
 
-  // Strict Semantic Matching & Medical Entity Extraction to Prevent Context Drift
-  const cleanQuery = prompt.toLowerCase().trim();
-  const rawTerms = cleanQuery
-    .replace(/[؟?.,!;:()\[\]{}"'\\\/]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length >= 2);
-
-  const STOP_WORDS = new Set([
-    'what', 'is', 'the', 'are', 'was', 'were', 'how', 'to', 'for', 'a', 'an', 'in',
-    'on', 'at', 'by', 'with', 'from', 'about', 'can', 'you', 'tell', 'me', 'explain',
-    'give', 'does', 'do', 'did', 'which', 'when', 'where', 'why', 'who', 'should',
-    'would', 'could', 'please', 'of', 'and', 'or', 'as', 'if', 'into', 'than',
-    'ما', 'هو', 'هي', 'ماذا', 'كيف', 'هل', 'في', 'من', 'عن', 'على', 'إلى', 'مع',
-    'هذا', 'هذه', 'ذلك', 'كان', 'يكون', 'اشرح', 'وضح', 'اذكر', 'بين', 'اعطني', 'منفضلك'
-  ]);
-
-  // Core informative medical terms (stopwords removed)
-  const coreKeywords = rawTerms.filter(t => !STOP_WORDS.has(t));
-  const effectiveKeywords = coreKeywords.length > 0 ? coreKeywords : rawTerms;
-
-  // Extract medical bigrams from query (e.g. "acute limb", "limb ischemia", "type ia", "heparin bolus")
-  const queryBigrams: string[] = [];
-  for (let i = 0; i < rawTerms.length - 1; i++) {
-    if (!STOP_WORDS.has(rawTerms[i]) || !STOP_WORDS.has(rawTerms[i + 1])) {
-      queryBigrams.push(`${rawTerms[i]} ${rawTerms[i + 1]}`);
+  // Whole-book retrieval: every chunk of the selected book(s) is searched, and Arabic questions
+  // are matched against English books through AI-provided English search terms.
+  let retrieval = retrieveBookContext(prompt, matchedDocs);
+  if (containsArabic(prompt) || retrieval.chunks.length < 3) {
+    const expandedTerms = await expandQueryTerms(prompt);
+    if (expandedTerms.length > 0) {
+      retrieval = retrieveBookContext(prompt, matchedDocs, { expandedTerms });
     }
   }
+  const relevantChunks = retrieval.chunks;
+  const bookOutline = retrieval.outline;
 
-  interface ScoredChunkItem {
-    chunk: any;
-    score: number;
-    coverage: number;
-    matchReasons: string[];
-  }
-
-  const scoredChunks: ScoredChunkItem[] = [];
-  let totalChunksEvaluated = 0;
-
-  for (const doc of matchedDocs) {
-    for (const c of doc.chunks) {
-      totalChunksEvaluated++;
-      let score = 0;
-      const matchReasons: string[] = [];
-      const contentLower = (c.content || '').toLowerCase();
-      const contentArLower = (c.contentAr || '').toLowerCase();
-      const chapterLower = (c.chapter || '').toLowerCase();
-      const sectionLower = (c.section || '').toLowerCase();
-      const docTitleLower = (c.document_title || '').toLowerCase();
-
-      // 1. Direct exact multi-word query match
-      if (cleanQuery.length >= 4 && (contentLower.includes(cleanQuery) || contentArLower.includes(cleanQuery))) {
-        score += 120;
-        matchReasons.push('Exact query phrase found in chunk');
-      }
-
-      // 2. Bigram matches (high semantic cohesion)
-      for (const bg of queryBigrams) {
-        if (contentLower.includes(bg) || contentArLower.includes(bg)) {
-          score += 35;
-          matchReasons.push(`Matched bigram "${bg}"`);
-        }
-      }
-
-      // 3. Keyword matches & coverage ratio calculation
-      let matchedKeywordCount = 0;
-      for (const kw of effectiveKeywords) {
-        const inContent = contentLower.includes(kw) || contentArLower.includes(kw);
-        const inSection = sectionLower.includes(kw);
-        const inChapter = chapterLower.includes(kw);
-        const inTags = c.tags && c.tags.some((t: string) => t.toLowerCase().includes(kw));
-
-        if (inContent || inSection || inChapter || inTags) {
-          matchedKeywordCount++;
-          score += inContent ? 15 : inSection ? 12 : inTags ? 10 : 6;
-        }
-      }
-
-      const coverageRatio = effectiveKeywords.length > 0
-        ? matchedKeywordCount / effectiveKeywords.length
-        : 0;
-
-      // 4. Strict coverage filtering to PREVENT CONTEXT DRIFT:
-      // If user provided 2 or more core clinical keywords, the chunk MUST match at least 40%
-      // of them to be relevant. Otherwise, penalize to zero.
-      if (effectiveKeywords.length >= 2 && coverageRatio < 0.4) {
-        score = 0;
-      } else if (coverageRatio >= 0.75) {
-        score += 45; // High semantic coverage bonus
-        matchReasons.push(`High keyword coverage (${Math.round(coverageRatio * 100)}%)`);
-      }
-
-      // 5. Keyword Proximity Bonus (terms appearing within 120 characters in the text)
-      if (matchedKeywordCount >= 2 && contentLower.length > 0) {
-        for (let i = 0; i < effectiveKeywords.length - 1; i++) {
-          const idx1 = contentLower.indexOf(effectiveKeywords[i]);
-          const idx2 = contentLower.indexOf(effectiveKeywords[i + 1]);
-          if (idx1 !== -1 && idx2 !== -1 && Math.abs(idx1 - idx2) < 120) {
-            score += 40;
-            matchReasons.push('Keywords appear in close sentence proximity');
-            break;
-          }
-        }
-      }
-
-      // Section and chapter relevance
-      if (sectionLower.includes(cleanQuery)) score += 30;
-      if (chapterLower.includes(cleanQuery)) score += 20;
-
-      // Minimum strict relevance threshold
-      if (score >= 30) {
-        scoredChunks.push({
-          chunk: c,
-          score,
-          coverage: coverageRatio,
-          matchReasons,
-        });
-      }
-    }
-  }
-
-  scoredChunks.sort((a, b) => b.score - a.score);
-  const relevantChunks = scoredChunks.slice(0, 6).map(sc => sc.chunk);
-
-  console.log(`
-============================================================
-🎯 [RAG STRICT SEMANTIC RETRIEVAL & GROUNDING LOG]
-------------------------------------------------------------
-🔍 User Query:         "${prompt}"
-🔑 Core Keywords:      [${effectiveKeywords.join(', ')}]
-📚 Evaluated Chunks:   ${totalChunksEvaluated} across ${matchedDocs.length} book(s)
-✅ Passing Chunks:     ${scoredChunks.length} (score threshold >= 30)
-🏆 Top Score:          ${scoredChunks[0]?.score || 0}
-📑 Selected Chunks:    ${relevantChunks.length}
-${relevantChunks.map((c, i) => `   [#${i + 1}] Score: ${scoredChunks[i]?.score} | ${c.document_title} > ${c.chapter} > ${c.section} (P.${c.page_number})`).join('\n')}
-============================================================
-`);
+  console.log(`[book retrieval] "${prompt.slice(0, 80)}": searched ${retrieval.totalChunksSearched} chunks in ${matchedDocs.length} book(s), selected ${relevantChunks.length}`);
 
   // Check if we have matching chunks in uploaded books / ESVS guidelines
   if (relevantChunks.length === 0) {
@@ -1431,8 +1309,9 @@ STRICT CONSTRAINTS & CONTEXT RETRIEVAL DIRECTIVES:
   const apiPrompt = `Question from Junior Vascular Surgery Resident:
 "${prompt}"
 
-Retrieved Textbook Context (Unabridged excerpts from indexed book):
+Retrieved Textbook Context (the most relevant passages found by searching the ENTIRE book, in book order; page numbers are the real book pages):
 ${referenceSnippet}
+${bookOutline ? `\nTable of contents of the searched book(s), for orientation:${bookOutline}` : ''}
 
 Language Mode: ${languageMode}
 Resident Training Level: ${level}
