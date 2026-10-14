@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { CLINICAL_CASES } from './src/data/clinicalCasesData.ts';
 import { INITIAL_REFERENCES } from './src/data/referencesData.ts';
@@ -810,7 +811,18 @@ app.post(
 
       console.log(`[parse-pdf-raw] "${fileName}": ${(buffer.length / 1048576).toFixed(1)} MB, ${totalPages} pages, ${charCount.toLocaleString()} chars, ${emptyPages} empty pages`);
 
-      return res.json({ success: true, fileName, totalPages, charCount, emptyPages, pages });
+      // Scanned (picture-only) pages: keep the PDF on disk so the browser can OCR page by page.
+      let needsOcr = false;
+      let uploadId = '';
+      let ocrPages: number[] = [];
+      if (pages.length > 0 && emptyPages >= pages.length * 0.4) {
+        ocrPages = pages.filter(p => p.text.length < 20).map(p => p.pageNumber).slice(0, MAX_OCR_PAGES);
+        uploadId = crypto.randomBytes(12).toString('hex');
+        await fs.promises.writeFile(ocrFilePath(uploadId), buffer);
+        needsOcr = true;
+      }
+
+      return res.json({ success: true, fileName, totalPages, charCount, emptyPages, pages, needsOcr, uploadId, ocrPages });
     } catch (err: any) {
       console.error('Error in /api/parse-pdf-raw:', err);
       return res.status(500).json({
@@ -820,6 +832,158 @@ app.post(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Scanned-PDF OCR: the PDF stays on disk (not in RAM). The browser asks for one page at a time;
+// the server renders that page to an image and reads it with Gemini.
+// ---------------------------------------------------------------------------
+const MAX_OCR_PAGES = 1500;
+const OCR_FILE_TTL_MS = 3 * 60 * 60 * 1000;
+
+function ocrFilePath(uploadId: string): string {
+  return path.join(os.tmpdir(), `ocr-${uploadId}.pdf`);
+}
+
+function isValidUploadId(id: unknown): id is string {
+  return typeof id === 'string' && /^[a-f0-9]{24}$/.test(id);
+}
+
+// Only one book is OCR'd at a time to keep memory low on small hosts.
+interface OcrEntry { uploadId: string; parser: any; lock: Promise<unknown>; lastUsed: number }
+let activeOcr: OcrEntry | null = null;
+
+async function closeActiveOcr() {
+  if (activeOcr) {
+    const old = activeOcr;
+    activeOcr = null;
+    try { await old.lock; } catch { /* ignore */ }
+    try { await old.parser.destroy(); } catch { /* ignore */ }
+  }
+}
+
+// Three page requests arrive at the same time when a book starts: they must share ONE parser
+// (otherwise each opens its own copy of the PDF in memory and the extras are never released).
+let opening: { uploadId: string; promise: Promise<OcrEntry | null> } | null = null;
+
+async function getOcrParser(uploadId: string) {
+  if (activeOcr && activeOcr.uploadId === uploadId) {
+    activeOcr.lastUsed = Date.now();
+    return activeOcr;
+  }
+  if (opening && opening.uploadId === uploadId) return opening.promise;
+
+  const promise = (async () => {
+    await closeActiveOcr();
+    const file = ocrFilePath(uploadId);
+    if (!fs.existsSync(file)) return null;
+    const { PDFParse } = await import('pdf-parse');
+    const data = await fs.promises.readFile(file);
+    activeOcr = { uploadId, parser: new PDFParse({ data }), lock: Promise.resolve(), lastUsed: Date.now() };
+    return activeOcr;
+  })();
+  opening = { uploadId, promise };
+  try {
+    return await promise;
+  } finally {
+    if (opening && opening.promise === promise) opening = null;
+  }
+}
+
+// Remove old temp files and idle parsers
+setInterval(async () => {
+  try {
+    if (activeOcr && Date.now() - activeOcr.lastUsed > 15 * 60 * 1000) await closeActiveOcr();
+    for (const f of await fs.promises.readdir(os.tmpdir())) {
+      if (!/^ocr-[a-f0-9]{24}\.pdf$/.test(f)) continue;
+      const full = path.join(os.tmpdir(), f);
+      const st = await fs.promises.stat(full);
+      if (Date.now() - st.mtimeMs > OCR_FILE_TTL_MS) await fs.promises.unlink(full);
+    }
+  } catch { /* best effort */ }
+}, 10 * 60 * 1000).unref();
+
+const PDF_PAGE_OCR_PROMPT = `You are a precise OCR scanner for a medical textbook page image.
+Extract ALL text on the page in reading order, in the page's original language (English or Arabic).
+Rules:
+- Plain text only. Do NOT use markdown headings (#), bold, or code fences.
+- If a chapter title is visible, write it as its own line starting with "Chapter" and its number (for example "Chapter 5: Carotid Disease").
+- Keep medical terms, numbers, drug doses and units exactly as printed.
+- Write tables row by row, with cells separated by " | ".
+- Ignore running headers, footers and page numbers.
+- If the page has no readable text, output nothing.
+- No introduction, no comments: output ONLY the page text.`;
+
+app.post('/api/ocr-pdf-page', async (req: Request, res: Response) => {
+  try {
+    const { uploadId, pageNumber } = req.body || {};
+    if (!isValidUploadId(uploadId) || !Number.isInteger(pageNumber) || pageNumber < 1) {
+      return res.status(400).json({ error: 'uploadId and pageNumber are required' });
+    }
+    if (!process.env.GEMINI_API_KEY || !ai) {
+      return res.status(503).json({ error: 'API key not configured' });
+    }
+
+    const entry = await getOcrParser(uploadId);
+    if (!entry) {
+      return res.status(410).json({ error: 'Upload expired. Please upload the book again.' });
+    }
+
+    // Rendering one page at a time (the PDF engine is not safe for parallel use)...
+    const rendered = entry.lock.then(() =>
+      entry.parser.getScreenshot({ partial: [pageNumber], desiredWidth: 1500, imageDataUrl: false, imageBuffer: true })
+    );
+    entry.lock = rendered.catch(() => undefined);
+    const shot: any = await rendered;
+    const img = shot?.pages?.[0]?.data;
+    if (!img || img.length === 0) {
+      return res.status(500).json({ error: 'Page could not be rendered' });
+    }
+    const base64 = Buffer.from(img).toString('base64');
+
+    // ...while the AI reading of different pages can run in parallel.
+    let text = '';
+    let lastErr: any = null;
+    for (const model of ['gemini-3.8-flash', 'gemini-3.1-flash-lite']) {
+      for (let attempt = 0; attempt < 2 && !text; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [{ inlineData: { mimeType: 'image/png', data: base64 } }, PDF_PAGE_OCR_PROMPT],
+          });
+          text = (response.text || '').trim();
+          lastErr = null;
+          break;
+        } catch (e: any) {
+          lastErr = e;
+          await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        }
+      }
+      if (text || !lastErr) break;
+    }
+    if (lastErr && !text) {
+      return res.status(503).json({ error: 'OCR temporarily unavailable', details: lastErr?.message || String(lastErr) });
+    }
+
+    // Safety: headings would be mistaken for chapter titles later
+    text = text.replace(/^#{1,6}\s+/gm, '').replace(/```/g, '');
+    return res.json({ pageNumber, text });
+  } catch (err: any) {
+    console.error('Error in /api/ocr-pdf-page:', err);
+    return res.status(500).json({ error: 'OCR failed', details: err?.message || String(err) });
+  }
+});
+
+app.delete('/api/ocr-pdf/:uploadId', async (req: Request, res: Response) => {
+  try {
+    const { uploadId } = req.params;
+    if (!isValidUploadId(uploadId)) return res.status(400).json({ error: 'bad id' });
+    if (activeOcr && activeOcr.uploadId === uploadId) await closeActiveOcr();
+    await fs.promises.unlink(ocrFilePath(uploadId)).catch(() => undefined);
+    return res.json({ success: true });
+  } catch {
+    return res.json({ success: false });
+  }
+});
 
 // Full Document Ingestion & PDF Parser Endpoint (100% Unabridged Page Extraction)
 app.post('/api/parse-pdf', async (req: Request, res: Response) => {
