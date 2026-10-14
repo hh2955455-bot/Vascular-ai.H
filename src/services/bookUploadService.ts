@@ -152,7 +152,7 @@ export async function extractTextFromFiles(
     if (isImageFile(files[0])) {
       return extractTextFromImageFile(files[0], 1, (msg) => onProgress?.(msg, 1, 1));
     }
-    return extractTextFromFile(files[0]);
+    return extractTextFromFile(files[0], (msg) => onProgress?.(msg, 1, 1));
   }
 
   // Multiple files (e.g. multiple book page images)
@@ -201,11 +201,214 @@ export async function extractTextFromFiles(
 }
 
 /**
+ * OCR for scanned PDF pages. The server keeps the uploaded PDF and renders/reads one page per call;
+ * we run a few pages in parallel and retry flaky ones. Pages that keep failing are skipped
+ * (the caller decides whether enough text was recovered).
+ */
+async function ocrScannedPages(
+  uploadId: string,
+  pageNumbers: number[],
+  onProgress?: (message: string) => void
+): Promise<Map<number, string>> {
+  const results = new Map<number, string>();
+  const CONCURRENCY = 3;
+  let next = 0;
+  let done = 0;
+  let failed = 0;
+  const total = pageNumbers.length;
+  const startedAt = Date.now();
+
+  const report = () => {
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const perPage = done > 0 ? elapsed / done : 0;
+    const remainMin = perPage > 0 ? Math.ceil((perPage * (total - done)) / 60) : 0;
+    onProgress?.(
+      `الكتاب ممسوح ضوئيًا: جارٍ قراءة الصفحات بالـ OCR ${done}/${total}` +
+      (remainMin > 0 ? ` (متبقي حوالي ${remainMin} دقيقة، لا تغلق الصفحة)` : ' (لا تغلق الصفحة)') +
+      ` — Scanned book: OCR page ${done}/${total}`
+    );
+  };
+
+  const worker = async () => {
+    while (next < pageNumbers.length) {
+      const pageNumber = pageNumbers[next++];
+      let text = '';
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          const res = await fetch('/api/ocr-pdf-page', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId, pageNumber }),
+          });
+          if (res.status === 410) {
+            const fatal: any = new Error('انتهت صلاحية الملف على السيرفر، أعد رفع الكتاب. (Upload expired, please upload again.)');
+            fatal.fatal = true;
+            throw fatal;
+          }
+          if (res.status === 503) throw new Error('RETRY');
+          if (!res.ok) throw new Error('RETRY');
+          const data = await res.json();
+          text = String(data.text || '').trim();
+          ok = true;
+        } catch (e: any) {
+          if (e?.fatal) throw e;
+          await new Promise(r => setTimeout(r, 2500 * (attempt + 1)));
+        }
+      }
+      if (ok && text) results.set(pageNumber, text);
+      if (!ok) failed++;
+      done++;
+      report();
+    }
+  };
+
+  report();
+  try {
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()));
+  } finally {
+    fetch(`/api/ocr-pdf/${uploadId}`, { method: 'DELETE' }).catch(() => undefined);
+  }
+
+  if (failed > total * 0.3) {
+    throw new Error(
+      `فشلت قراءة ${failed} صفحة من ${total} (غالبًا بسبب حد استخدام الذكاء الاصطناعي). حاول مرة أخرى بعد قليل. ` +
+      `(OCR failed on ${failed} of ${total} pages. Please try again later.)`
+    );
+  }
+  return results;
+}
+
+/**
+ * Reads a PDF INSIDE THE BROWSER with pdf.js, page by page. The file never goes to the server,
+ * so there is no size limit and no server-memory problem (the free host has only 512 MB).
+ * Pages that are only pictures (scanned books) are drawn to a canvas and read with AI OCR.
+ */
+async function readPdfInBrowser(
+  file: File,
+  onProgress?: (message: string) => void
+): Promise<{ pages: { pageNumber: number; text: string }[]; totalPages: number }> {
+  const pdfjs: any = await import('pdfjs-dist');
+  const workerUrl: string = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+
+  // A blob URL lets pdf.js read the file in ranges instead of copying the whole book into memory
+  const blobUrl = URL.createObjectURL(file);
+  const pdf = await pdfjs.getDocument({ url: blobUrl, disableAutoFetch: true }).promise;
+  const totalPages: number = pdf.numPages;
+  const pages: { pageNumber: number; text: string }[] = [];
+
+  try {
+    for (let n = 1; n <= totalPages; n++) {
+      const page = await pdf.getPage(n);
+      const content = await page.getTextContent();
+      let text = '';
+      for (const item of content.items as any[]) {
+        if (typeof item.str === 'string') text += item.str + (item.hasEOL ? '\n' : ' ');
+      }
+      pages.push({ pageNumber: n, text: text.trim() });
+      page.cleanup();
+      if (n % 10 === 0 || n === totalPages) {
+        onProgress?.(`جارٍ قراءة الكتاب على جهازك: صفحة ${n} من ${totalPages} — Reading page ${n}/${totalPages}`);
+        await new Promise(r => setTimeout(r, 0)); // let the screen update
+      }
+    }
+
+    // Scanned pages: more than 40% of the book has no text layer -> OCR those pages
+    const empty = pages.filter(p => p.text.length < 20);
+    if (pages.length > 0 && empty.length >= pages.length * 0.4) {
+      const targets = empty.slice(0, 1500).map(p => p.pageNumber);
+      const CONCURRENCY = 3;
+      let next = 0;
+      let done = 0;
+      let failed = 0;
+      const startedAt = Date.now();
+
+      const report = () => {
+        const perPage = done > 0 ? (Date.now() - startedAt) / 1000 / done : 0;
+        const remainMin = perPage > 0 ? Math.ceil((perPage * (targets.length - done)) / 60) : 0;
+        onProgress?.(
+          `الكتاب ممسوح ضوئيًا: جارٍ قراءة الصفحات بالـ OCR ${done}/${targets.length}` +
+          (remainMin > 0 ? ` (متبقي حوالي ${remainMin} دقيقة، لا تغلق الصفحة)` : ' (لا تغلق الصفحة)') +
+          ` — Scanned book: OCR page ${done}/${targets.length}`
+        );
+      };
+
+      const worker = async () => {
+        while (next < targets.length) {
+          const pageNumber = targets[next++];
+          let ok = false;
+          for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+            try {
+              const page = await pdf.getPage(pageNumber);
+              const base = page.getViewport({ scale: 1 });
+              const viewport = page.getViewport({ scale: Math.min(2.5, 1500 / base.width) });
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.floor(viewport.width);
+              canvas.height = Math.floor(viewport.height);
+              const ctx = canvas.getContext('2d');
+              if (!ctx) throw new Error('canvas');
+              await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+              const blob: Blob | null = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
+              canvas.width = 0;
+              canvas.height = 0;
+              page.cleanup();
+              if (!blob) throw new Error('image');
+
+              const res = await fetch('/api/ocr-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  imageBase64: await fileToBase64(blob as File),
+                  mimeType: 'image/jpeg',
+                  pageNumber,
+                  fileName: file.name,
+                }),
+              });
+              if (!res.ok) throw new Error('RETRY');
+              const data = await res.json();
+              // Headings from OCR would be mistaken for chapter titles; keep plain text
+              let text = String(data.text || '').replace(/^#{1,6}\s+/gm, '').replace(/```/g, '').trim();
+              if (text.includes('Configure API key')) text = ''; // server placeholder when no AI key
+              const entry = pages.find(p => p.pageNumber === pageNumber);
+              if (entry && text) entry.text = text;
+              ok = true;
+            } catch {
+              await new Promise(r => setTimeout(r, 2500 * (attempt + 1)));
+            }
+          }
+          if (!ok) failed++;
+          done++;
+          report();
+        }
+      };
+
+      report();
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker()));
+      if (failed > targets.length * 0.3) {
+        throw Object.assign(
+          new Error(
+            `فشلت قراءة ${failed} صفحة من ${targets.length} (غالبًا بسبب حد استخدام الذكاء الاصطناعي). حاول مرة أخرى بعد قليل. ` +
+            `(OCR failed on ${failed} of ${targets.length} pages. Please try again later.)`
+          ),
+          { userFacing: true }
+        );
+      }
+    }
+  } finally {
+    try { await pdf.destroy(); } catch { /* ignore */ }
+    URL.revokeObjectURL(blobUrl);
+  }
+
+  return { pages, totalPages };
+}
+
+/**
  * Extracts all readable text from an ArrayBuffer / File
  * Supports TXT, Markdown, JSON, PDF, and Image (PNG, JPG, WEBP) OCR extraction.
  * Guarantees FULL UNABRIDGED INGESTION from start to finish.
  */
-export async function extractTextFromFile(file: File): Promise<string> {
+export async function extractTextFromFile(file: File, onProgress?: (message: string) => void): Promise<string> {
   const fileName = file.name.toLowerCase();
   let extractedRaw = '';
   let parsedPagesCount = 1;
@@ -247,45 +450,68 @@ export async function extractTextFromFile(file: File): Promise<string> {
     return imgText;
   }
 
-  // 2. PDF Extraction via Server PDFParse. The file is sent as RAW BYTES (not base64/JSON),
-  // so large books upload without the 33% size inflation and without memory spikes.
+  // 2. PDF extraction. First choice: read it in the browser (no size limit, no server memory use).
+  // If the browser cannot do it (very old browser, damaged file), fall back to the server.
   if (fileName.endsWith('.pdf') || file.type === 'application/pdf') {
+    let pages: { pageNumber: number; text: string }[] = [];
+    let browserOk = false;
     let data: any = null;
-    let serverError = '';
 
     try {
-      const res = await fetch('/api/parse-pdf-raw', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'x-file-name': encodeURIComponent(file.name),
-        },
-        body: file,
-      });
-      if (res.ok) {
-        data = await res.json();
-      } else if (res.status === 413) {
-        serverError = 'الملف أكبر من الحد المسموح على السيرفر (File too large for the server).';
-      } else {
-        serverError = `تعذّر قراءة الملف على السيرفر (HTTP ${res.status}). قد يكون الكتاب كبيرًا جدًا على الذاكرة المتاحة.`;
+      const result = await readPdfInBrowser(file, onProgress);
+      pages = result.pages;
+      parsedPagesCount = result.totalPages;
+      browserOk = true;
+    } catch (browserErr: any) {
+      if (browserErr?.userFacing) throw browserErr;
+      console.warn('Browser PDF reading failed, falling back to the server:', browserErr);
+    }
+
+    if (!browserOk) {
+      let serverError = '';
+
+      try {
+        const res = await fetch('/api/parse-pdf-raw', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'x-file-name': encodeURIComponent(file.name),
+          },
+          body: file,
+        });
+        if (res.ok) {
+          data = await res.json();
+        } else if (res.status === 413) {
+          serverError = 'الملف أكبر من الحد المسموح على السيرفر (File too large for the server).';
+        } else {
+          serverError = `تعذّر قراءة الملف على السيرفر (HTTP ${res.status}). قد يكون الكتاب كبيرًا جدًا على الذاكرة المتاحة.`;
+        }
+      } catch (serverPdfErr) {
+        console.warn('Server PDF parsing endpoint unreachable:', serverPdfErr);
+        serverError = 'تعذّر الاتصال بالسيرفر أثناء رفع الملف. تأكد من الإنترنت وحاول مرة أخرى (Connection to the server failed).';
       }
-    } catch (serverPdfErr) {
-      console.warn('Server PDF parsing endpoint unreachable:', serverPdfErr);
-      serverError = 'تعذّر الاتصال بالسيرفر أثناء رفع الملف. تأكد من الإنترنت وحاول مرة أخرى (Connection to the server failed).';
+
+      if (!data || !Array.isArray(data.pages)) {
+        throw new Error(serverError || 'تعذّر قراءة ملف PDF (PDF could not be read).');
+      }
+
+      pages = data.pages;
+
+      // Scanned pages (pictures only): read them with AI OCR, page by page, from the server copy.
+      if (data.needsOcr && data.uploadId && Array.isArray(data.ocrPages) && data.ocrPages.length > 0) {
+        const ocrTexts = await ocrScannedPages(data.uploadId, data.ocrPages, onProgress);
+        for (const p of pages) {
+          const t = ocrTexts.get(p.pageNumber);
+          if (t) p.text = t;
+        }
+      }
     }
 
-    if (!data || !Array.isArray(data.pages)) {
-      throw new Error(serverError || 'تعذّر قراءة ملف PDF (PDF could not be read).');
-    }
-
-    const pages: { pageNumber: number; text: string }[] = data.pages;
     const nonEmpty = pages.filter(p => p.text && p.text.trim().length >= 20);
-    // Scanned books (pictures of pages, no real text) cannot be searched. Say so clearly instead
-    // of silently storing an empty "book".
     if (nonEmpty.length === 0 || nonEmpty.length < pages.length * 0.15) {
       throw new Error(
-        'هذا الكتاب يبدو صورًا ممسوحة ضوئيًا (بدون نص حقيقي)، فلا يمكن قراءته. ارفع نسخة نصية من الكتاب، أو ارفع صفحاته كصور ليتم قراءتها بالـ OCR. ' +
-        '(This PDF looks like scanned images with no text layer.)'
+        'تعذّرت قراءة نص الكتاب حتى بالتعرف الضوئي (OCR). جرّب نسخة أوضح من الكتاب. ' +
+        '(No readable text could be extracted, even with OCR.)'
       );
     }
 
@@ -294,11 +520,11 @@ export async function extractTextFromFile(file: File): Promise<string> {
       .filter(p => p.text && p.text.trim())
       .map(p => `\n${PAGE_MARK_PREFIX}${p.pageNumber}${PAGE_MARK_SUFFIX}\n${p.text.trim()}`)
       .join('\n');
-    parsedPagesCount = data.totalPages || pages.length || 1;
+    parsedPagesCount = parsedPagesCount > 1 ? parsedPagesCount : (data?.totalPages || pages.length || 1);
     const wordCount = extractedRaw.split(/\s+/).filter(Boolean).length;
     const tokenCount = Math.round(wordCount * 1.33);
 
-    console.log(`[book upload] "${file.name}": ${parsedPagesCount} pages, ${wordCount.toLocaleString()} words, ${data.emptyPages ?? 0} empty pages`);
+    console.log(`[book upload] "${file.name}": ${parsedPagesCount} pages, ${wordCount.toLocaleString()} words, ${pages.filter(p => !p.text || p.text.trim().length < 20).length} empty pages`);
 
     const cleanedPdfText = await cleanAndRestoreExtractedText(extractedRaw);
     setLatestIngestionStats({
