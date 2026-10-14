@@ -152,7 +152,7 @@ export async function extractTextFromFiles(
     if (isImageFile(files[0])) {
       return extractTextFromImageFile(files[0], 1, (msg) => onProgress?.(msg, 1, 1));
     }
-    return extractTextFromFile(files[0]);
+    return extractTextFromFile(files[0], (msg) => onProgress?.(msg, 1, 1));
   }
 
   // Multiple files (e.g. multiple book page images)
@@ -201,11 +201,90 @@ export async function extractTextFromFiles(
 }
 
 /**
+ * OCR for scanned PDF pages. The server keeps the uploaded PDF and renders/reads one page per call;
+ * we run a few pages in parallel and retry flaky ones. Pages that keep failing are skipped
+ * (the caller decides whether enough text was recovered).
+ */
+async function ocrScannedPages(
+  uploadId: string,
+  pageNumbers: number[],
+  onProgress?: (message: string) => void
+): Promise<Map<number, string>> {
+  const results = new Map<number, string>();
+  const CONCURRENCY = 3;
+  let next = 0;
+  let done = 0;
+  let failed = 0;
+  const total = pageNumbers.length;
+  const startedAt = Date.now();
+
+  const report = () => {
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const perPage = done > 0 ? elapsed / done : 0;
+    const remainMin = perPage > 0 ? Math.ceil((perPage * (total - done)) / 60) : 0;
+    onProgress?.(
+      `الكتاب ممسوح ضوئيًا: جارٍ قراءة الصفحات بالـ OCR ${done}/${total}` +
+      (remainMin > 0 ? ` (متبقي حوالي ${remainMin} دقيقة، لا تغلق الصفحة)` : ' (لا تغلق الصفحة)') +
+      ` — Scanned book: OCR page ${done}/${total}`
+    );
+  };
+
+  const worker = async () => {
+    while (next < pageNumbers.length) {
+      const pageNumber = pageNumbers[next++];
+      let text = '';
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          const res = await fetch('/api/ocr-pdf-page', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId, pageNumber }),
+          });
+          if (res.status === 410) {
+            const fatal: any = new Error('انتهت صلاحية الملف على السيرفر، أعد رفع الكتاب. (Upload expired, please upload again.)');
+            fatal.fatal = true;
+            throw fatal;
+          }
+          if (res.status === 503) throw new Error('RETRY');
+          if (!res.ok) throw new Error('RETRY');
+          const data = await res.json();
+          text = String(data.text || '').trim();
+          ok = true;
+        } catch (e: any) {
+          if (e?.fatal) throw e;
+          await new Promise(r => setTimeout(r, 2500 * (attempt + 1)));
+        }
+      }
+      if (ok && text) results.set(pageNumber, text);
+      if (!ok) failed++;
+      done++;
+      report();
+    }
+  };
+
+  report();
+  try {
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()));
+  } finally {
+    fetch(`/api/ocr-pdf/${uploadId}`, { method: 'DELETE' }).catch(() => undefined);
+  }
+
+  if (failed > total * 0.3) {
+    throw new Error(
+      `فشلت قراءة ${failed} صفحة من ${total} (غالبًا بسبب حد استخدام الذكاء الاصطناعي). حاول مرة أخرى بعد قليل. ` +
+      `(OCR failed on ${failed} of ${total} pages. Please try again later.)`
+    );
+  }
+  return results;
+}
+
+/**
  * Extracts all readable text from an ArrayBuffer / File
  * Supports TXT, Markdown, JSON, PDF, and Image (PNG, JPG, WEBP) OCR extraction.
  * Guarantees FULL UNABRIDGED INGESTION from start to finish.
  */
-export async function extractTextFromFile(file: File): Promise<string> {
+export async function extractTextFromFile(file: File, onProgress?: (message: string) => void): Promise<string> {
   const fileName = file.name.toLowerCase();
   let extractedRaw = '';
   let parsedPagesCount = 1;
@@ -279,13 +358,21 @@ export async function extractTextFromFile(file: File): Promise<string> {
     }
 
     const pages: { pageNumber: number; text: string }[] = data.pages;
+
+    // Scanned pages (pictures only): read them with AI OCR, page by page, from the server copy.
+    if (data.needsOcr && data.uploadId && Array.isArray(data.ocrPages) && data.ocrPages.length > 0) {
+      const ocrTexts = await ocrScannedPages(data.uploadId, data.ocrPages, onProgress);
+      for (const p of pages) {
+        const t = ocrTexts.get(p.pageNumber);
+        if (t) p.text = t;
+      }
+    }
+
     const nonEmpty = pages.filter(p => p.text && p.text.trim().length >= 20);
-    // Scanned books (pictures of pages, no real text) cannot be searched. Say so clearly instead
-    // of silently storing an empty "book".
     if (nonEmpty.length === 0 || nonEmpty.length < pages.length * 0.15) {
       throw new Error(
-        'هذا الكتاب يبدو صورًا ممسوحة ضوئيًا (بدون نص حقيقي)، فلا يمكن قراءته. ارفع نسخة نصية من الكتاب، أو ارفع صفحاته كصور ليتم قراءتها بالـ OCR. ' +
-        '(This PDF looks like scanned images with no text layer.)'
+        'تعذّرت قراءة نص الكتاب حتى بالتعرف الضوئي (OCR). جرّب نسخة أوضح من الكتاب. ' +
+        '(No readable text could be extracted, even with OCR.)'
       );
     }
 
