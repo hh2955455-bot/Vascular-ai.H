@@ -74,6 +74,7 @@ export const LibraryView: React.FC = () => {
   const [docCategory, setDocCategory] = useState<'textbook' | 'guideline' | 'review'>('guideline');
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgressMsg, setUploadProgressMsg] = useState('');
+  const [uploadError, setUploadError] = useState('');
   const [recentVerificationStats, setRecentVerificationStats] = useState<IngestionVerificationStats | null>(null);
   const [pipelineSteps, setPipelineSteps] = useState<{ name: string; done: boolean; inProgress: boolean }[]>([
     { name: 'Reading Complete Book / Images Source', done: false, inProgress: false },
@@ -130,6 +131,7 @@ export const LibraryView: React.FC = () => {
     if (!finalTitle) return;
 
     setIsProcessing(true);
+    setUploadError('');
     setUploadProgressMsg('Starting full book ingestion pipeline...');
 
     try {
@@ -211,6 +213,8 @@ export const LibraryView: React.FC = () => {
     } catch (err: any) {
       console.error('Book upload error:', err);
       setUploadProgressMsg(`Upload notice: ${err?.message || 'Processing completed locally.'}`);
+      // Keep the real reason visible on the form (the progress box is hidden once processing stops)
+      setUploadError(err?.message || (isAr ? 'فشل رفع الكتاب. حاول مرة أخرى.' : 'Book upload failed. Please try again.'));
       setIsProcessing(false);
     }
   };
@@ -911,6 +915,12 @@ export const LibraryView: React.FC = () => {
 
             {!isProcessing ? (
               <div className="space-y-4">
+                {uploadError && (
+                  <div role="alert" className="p-3 rounded-xl bg-rose-950/60 border border-rose-700/60 text-xs text-rose-200 leading-relaxed">
+                    <span className="font-bold">{isAr ? 'فشل رفع الكتاب: ' : 'Upload failed: '}</span>
+                    {uploadError}
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
                     {isAr ? 'عنوان المرجع / الكتاب:' : 'Reference Title / Guideline Name:'}
